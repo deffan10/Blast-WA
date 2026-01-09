@@ -221,9 +221,22 @@
 
                         <!-- Recent Activity -->
                         <div class="bg-white rounded-xl shadow-sm p-6">
-                            <h3 class="font-semibold text-gray-800 mb-4">Aktivitas Terbaru</h3>
-                            <div id="recentLogs" class="space-y-3 max-h-64 overflow-y-auto">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="font-semibold text-gray-800">Aktivitas Terbaru</h3>
+                                <span id="activityInfo" class="text-xs text-gray-500"></span>
+                            </div>
+                            <div id="recentLogs" class="space-y-2">
                                 <p class="text-gray-500 text-sm">Belum ada aktivitas</p>
+                            </div>
+                            <!-- Pagination -->
+                            <div id="activityPagination" class="flex items-center justify-between mt-4 pt-4 border-t hidden">
+                                <button id="btnPrevActivity" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                    <i data-lucide="chevron-left" class="w-4 h-4 inline"></i> Prev
+                                </button>
+                                <span id="activityPageInfo" class="text-sm text-gray-600">Page 1 of 1</span>
+                                <button id="btnNextActivity" class="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                    Next <i data-lucide="chevron-right" class="w-4 h-4 inline"></i>
+                                </button>
                             </div>
                         </div>
                     </div>

@@ -8,6 +8,7 @@ const {
   WhatsAppSession 
 } = require('../models');
 const { getWhatsAppStatus } = require('../services/whatsapp.service');
+const config = require('../config');
 
 class DashboardController {
   // Get dashboard statistics
@@ -80,15 +81,6 @@ class DashboardController {
         limit: 5
       });
 
-      // Get recent logs
-      const recentLogs = await BlastLog.findAll({
-        include: [
-          { model: BlastCampaign, as: 'campaign', attributes: ['name'] }
-        ],
-        order: [['created_at', 'DESC']],
-        limit: 10
-      });
-
       // Get WhatsApp session info
       let waSession = await WhatsAppSession.findOne({ 
         where: { session_id: 'default' } 
@@ -123,8 +115,7 @@ class DashboardController {
               skipped: todaySkipped
             }
           },
-          activeCampaigns,
-          recentLogs
+          activeCampaigns
         }
       });
 
@@ -133,6 +124,99 @@ class DashboardController {
       res.status(500).json({
         success: false,
         message: 'Failed to get dashboard statistics'
+      });
+    }
+  }
+
+  // Get recent activity with pagination
+  async getRecentActivity(req, res) {
+    try {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 5;
+      const offset = (page - 1) * limit;
+
+      // Get total count
+      const totalLogs = await BlastLog.count();
+      
+      // Get paginated logs with campaign info
+      const logs = await BlastLog.findAll({
+        include: [
+          { 
+            model: BlastCampaign, 
+            as: 'campaign', 
+            attributes: ['name', 'interval_minutes', 'status'] 
+          }
+        ],
+        order: [['created_at', 'DESC']],
+        limit,
+        offset
+      });
+
+      // Calculate estimated send time for pending messages
+      const logsWithTimeInfo = await Promise.all(logs.map(async (log) => {
+        const logData = log.toJSON();
+        
+        if (logData.status === 'pending' && logData.campaign) {
+          // Calculate queue position and estimated time
+          const queuePosition = await BlastLog.count({
+            where: {
+              campaign_id: logData.campaign_id,
+              status: 'pending',
+              id: { [Op.lt]: logData.id }
+            }
+          });
+          
+          // Get the last sent message time for this campaign
+          const lastSent = await BlastLog.findOne({
+            where: {
+              campaign_id: logData.campaign_id,
+              status: 'sent'
+            },
+            order: [['sent_at', 'DESC']]
+          });
+          
+          // Calculate estimated time
+          const intervalMs = (logData.campaign.interval_minutes || 5) * 60 * 1000;
+          const randomDelayMs = ((config.whatsapp.randomDelayMin || 30) + (config.whatsapp.randomDelayMax || 90)) / 2 * 1000;
+          const avgDelayMs = intervalMs + randomDelayMs;
+          
+          let estimatedTime;
+          if (lastSent && lastSent.sent_at) {
+            estimatedTime = new Date(lastSent.sent_at.getTime() + (avgDelayMs * (queuePosition + 1)));
+          } else {
+            estimatedTime = new Date(Date.now() + (avgDelayMs * queuePosition));
+          }
+          
+          logData.queuePosition = queuePosition + 1;
+          logData.estimatedSendTime = estimatedTime;
+          logData.timeLeftMs = Math.max(0, estimatedTime.getTime() - Date.now());
+        }
+        
+        return logData;
+      }));
+
+      const totalPages = Math.ceil(totalLogs / limit);
+
+      res.json({
+        success: true,
+        data: {
+          logs: logsWithTimeInfo,
+          pagination: {
+            page,
+            limit,
+            totalLogs,
+            totalPages,
+            hasNext: page < totalPages,
+            hasPrev: page > 1
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Recent activity error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get recent activity'
       });
     }
   }

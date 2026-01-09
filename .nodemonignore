@@ -1,0 +1,5 @@
+sessions/
+sessions/**
+*.session
+auth_info_*
+node_modules/

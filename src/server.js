@@ -15,9 +15,13 @@ const app = express();
 const server = http.createServer(app);
 
 // Socket.io setup
+const allowedOrigins = process.env.CORS_ORIGINS 
+  ? process.env.CORS_ORIGINS.split(',') 
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
 const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: process.env.NODE_ENV === 'production' ? allowedOrigins : '*',
     methods: ['GET', 'POST']
   }
 });
@@ -73,8 +77,18 @@ const startServer = async () => {
     const { seedAdmin } = require('./seeders/admin.seeder');
     await seedAdmin();
 
-    // Initialize WhatsApp
-    await initWhatsApp(io);
+    // Don't auto-init WhatsApp - let user click Scan QR
+    // Check if there's existing session credentials
+    const fs = require('fs');
+    const sessionPath = path.resolve(config.whatsapp.sessionPath);
+    const hasExistingSession = fs.existsSync(path.join(sessionPath, 'creds.json'));
+    
+    if (hasExistingSession) {
+      console.log('📱 Found existing WhatsApp session, attempting to restore...');
+      await initWhatsApp(io, false);
+    } else {
+      console.log('📱 No WhatsApp session found. Click "Scan QR" in dashboard to connect.');
+    }
 
     // Initialize Queue system
     initQueues(io);

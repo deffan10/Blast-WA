@@ -8,8 +8,8 @@ let socket = null;
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
-    checkAuth();
     initEventListeners();
+    checkAuth();
 });
 
 // Check authentication
@@ -47,6 +47,16 @@ function initSocket() {
         updateWhatsAppStatus(data);
     });
     
+    socket.on('wa-error', (data) => {
+        // Handle WhatsApp specific errors like conflict
+        showToast(data.message, 'error', 10000);
+        if (data.type === 'conflict') {
+            // Show special UI for conflict
+            document.getElementById('waStatusBadge').className = 'px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-800';
+            document.getElementById('waStatusBadge').textContent = 'Conflict - Tunggu 30 detik';
+        }
+    });
+    
     socket.on('contact:validated', (data) => {
         showToast(`Kontak ${data.contactId} divalidasi: ${data.registered ? 'Terdaftar' : 'Tidak Terdaftar'}`, data.registered ? 'success' : 'warning');
         if (currentPage === 'contacts') loadContacts();
@@ -54,12 +64,16 @@ function initSocket() {
     
     socket.on('blast:log', (data) => {
         if (currentPage === 'blast') loadCampaigns();
-        if (currentPage === 'dashboard') loadDashboard();
+        if (currentPage === 'dashboard') {
+            loadDashboard();
+        }
     });
     
     socket.on('blast:campaign', (data) => {
         if (currentPage === 'blast') loadCampaigns();
-        if (currentPage === 'dashboard') loadDashboard();
+        if (currentPage === 'dashboard') {
+            loadDashboard();
+        }
     });
 }
 
@@ -126,7 +140,8 @@ async function apiCall(endpoint, options = {}) {
         
         const data = await response.json();
         
-        if (response.status === 401) {
+        // Only logout on 401 if not a login request
+        if (response.status === 401 && !endpoint.includes('/auth/login')) {
             handleLogout();
             throw new Error('Session expired');
         }
@@ -197,6 +212,7 @@ async function handleLogin(e) {
 function handleLogout() {
     token = null;
     localStorage.removeItem('token');
+    stopCountdownTimer();
     if (socket) socket.disconnect();
     showLogin();
 }
@@ -257,6 +273,11 @@ function navigateTo(page) {
 }
 
 // ===== DASHBOARD =====
+let activityPage = 1;
+const ACTIVITY_LIMIT = 5;
+let activityLogs = []; // Store logs for countdown
+let countdownInterval = null;
+
 async function loadDashboard() {
     try {
         const data = await apiCall('/dashboard/stats');
@@ -286,35 +307,244 @@ async function loadDashboard() {
         // Update WA status
         updateWhatsAppStatus(stats.whatsapp);
         
-        // Recent logs
-        const logsEl = document.getElementById('recentLogs');
-        if (stats.recentLogs && stats.recentLogs.length > 0) {
-            logsEl.innerHTML = stats.recentLogs.map(log => `
-                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <div>
-                        <p class="font-medium text-sm">${log.name || log.phone}</p>
-                        <p class="text-xs text-gray-500">${log.campaign?.name || 'Campaign'}</p>
-                    </div>
-                    <span class="px-2 py-1 text-xs font-medium rounded ${getStatusBadge(log.status)}">${log.status}</span>
-                </div>
-            `).join('');
-        } else {
-            logsEl.innerHTML = '<p class="text-gray-500 text-sm">Belum ada aktivitas</p>';
-        }
+        // Load recent activity with pagination
+        await loadRecentActivity();
         
     } catch (error) {
         showToast('Gagal memuat dashboard', 'error');
     }
 }
 
-function getStatusBadge(status) {
-    const badges = {
-        sent: 'bg-green-100 text-green-700',
-        failed: 'bg-red-100 text-red-700',
-        skipped: 'bg-yellow-100 text-yellow-700',
-        pending: 'bg-gray-100 text-gray-700'
+async function loadRecentActivity() {
+    try {
+        const data = await apiCall(`/dashboard/activity?page=${activityPage}&limit=${ACTIVITY_LIMIT}`);
+        const { logs, pagination } = data.data;
+        
+        // Store logs with fetch timestamp for countdown calculation
+        activityLogs = logs ? logs.map(log => ({
+            ...log,
+            fetchedAt: Date.now()
+        })) : [];
+        
+        const logsEl = document.getElementById('recentLogs');
+        const paginationEl = document.getElementById('activityPagination');
+        const infoEl = document.getElementById('activityInfo');
+        const pageInfoEl = document.getElementById('activityPageInfo');
+        const btnPrev = document.getElementById('btnPrevActivity');
+        const btnNext = document.getElementById('btnNextActivity');
+        
+        // Check if elements exist
+        if (!logsEl) {
+            console.warn('recentLogs element not found');
+            return;
+        }
+        
+        if (logs && logs.length > 0) {
+            renderActivityList();
+            
+            // Start countdown timer
+            startCountdownTimer();
+            
+            // Show pagination if elements exist
+            if (paginationEl) {
+                paginationEl.classList.remove('hidden');
+            }
+            if (infoEl) {
+                infoEl.textContent = `${pagination.totalLogs} total`;
+            }
+            if (pageInfoEl) {
+                pageInfoEl.textContent = `Hal ${pagination.page} dari ${pagination.totalPages}`;
+            }
+            
+            // Update buttons
+            if (btnPrev) {
+                btnPrev.disabled = !pagination.hasPrev;
+                btnPrev.onclick = () => { activityPage--; loadRecentActivity(); };
+            }
+            if (btnNext) {
+                btnNext.disabled = !pagination.hasNext;
+                btnNext.onclick = () => { activityPage++; loadRecentActivity(); };
+            }
+            
+        } else {
+            logsEl.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Belum ada aktivitas</p>';
+            if (paginationEl) paginationEl.classList.add('hidden');
+            if (infoEl) infoEl.textContent = '';
+            stopCountdownTimer();
+        }
+        
+    } catch (error) {
+        console.error('Load activity error:', error);
+        const logsEl = document.getElementById('recentLogs');
+        if (logsEl) {
+            logsEl.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Gagal memuat aktivitas</p>';
+        }
+        stopCountdownTimer();
+    }
+}
+
+function renderActivityList() {
+    const logsEl = document.getElementById('recentLogs');
+    if (!logsEl) return;
+    logsEl.innerHTML = activityLogs.map(log => renderActivityItem(log)).join('');
+    lucide.createIcons();
+}
+
+function startCountdownTimer() {
+    // Clear existing interval
+    stopCountdownTimer();
+    
+    // Check if there are any pending logs
+    const hasPending = activityLogs.some(log => log.status === 'pending' && log.timeLeftMs > 0);
+    if (!hasPending) return;
+    
+    // Update countdown every second
+    countdownInterval = setInterval(() => {
+        let needsRerender = false;
+        
+        activityLogs = activityLogs.map(log => {
+            if (log.status === 'pending' && log.timeLeftMs !== undefined) {
+                const elapsed = Date.now() - log.fetchedAt;
+                const newTimeLeft = Math.max(0, log.timeLeftMs - elapsed);
+                
+                // Check if status should change
+                if (newTimeLeft <= 0 && log.timeLeftMs > 0) {
+                    needsRerender = true;
+                }
+                
+                return { ...log, currentTimeLeft: newTimeLeft };
+            }
+            return log;
+        });
+        
+        // Update only the countdown elements (not full rerender)
+        activityLogs.forEach(log => {
+            if (log.status === 'pending') {
+                const el = document.getElementById(`countdown-${log.id}`);
+                if (el) {
+                    const timeLeft = log.currentTimeLeft !== undefined ? log.currentTimeLeft : log.timeLeftMs;
+                    if (timeLeft <= 0) {
+                        el.textContent = 'Sedang dikirim...';
+                        el.classList.add('text-green-600', 'animate-pulse');
+                    } else {
+                        el.textContent = `~${formatTimeLeft(timeLeft)}`;
+                    }
+                }
+            }
+        });
+        
+        // Check if all countdowns are done
+        const stillPending = activityLogs.some(log => 
+            log.status === 'pending' && (log.currentTimeLeft || log.timeLeftMs) > 0
+        );
+        if (!stillPending) {
+            stopCountdownTimer();
+        }
+        
+    }, 1000);
+}
+
+function stopCountdownTimer() {
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+    }
+}
+
+function renderActivityItem(log) {
+    const statusConfig = getStatusConfig(log);
+    const timeInfo = getTimeInfo(log);
+    const isPending = log.status === 'pending';
+    const countdownId = isPending ? `id="countdown-${log.id}"` : '';
+    
+    return `
+        <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    <p class="font-medium text-sm truncate">${log.name || log.phone}</p>
+                    <span class="text-xs text-gray-400">#${log.id}</span>
+                </div>
+                <p class="text-xs text-gray-500 truncate">${log.campaign?.name || 'Campaign'}</p>
+            </div>
+            <div class="flex flex-col items-end ml-3">
+                <span class="px-2 py-1 text-xs font-medium rounded flex items-center gap-1 ${statusConfig.badge}">
+                    <i data-lucide="${statusConfig.icon}" class="w-3 h-3"></i>
+                    ${statusConfig.label}
+                </span>
+                <span ${countdownId} class="text-xs text-gray-500 mt-1 ${isPending ? 'font-mono' : ''}">${timeInfo}</span>
+            </div>
+        </div>
+    `;
+}
+
+function getStatusConfig(log) {
+    const configs = {
+        sent: {
+            badge: 'bg-green-100 text-green-700',
+            icon: 'check-circle',
+            label: 'Terkirim'
+        },
+        failed: {
+            badge: 'bg-red-100 text-red-700',
+            icon: 'x-circle',
+            label: 'Gagal'
+        },
+        skipped: {
+            badge: 'bg-yellow-100 text-yellow-700',
+            icon: 'skip-forward',
+            label: 'Skip'
+        },
+        pending: {
+            badge: 'bg-blue-100 text-blue-700',
+            icon: 'clock',
+            label: log.queuePosition ? `Antrian #${log.queuePosition}` : 'Menunggu'
+        }
     };
-    return badges[status] || badges.pending;
+    return configs[log.status] || configs.pending;
+}
+
+function getTimeInfo(log) {
+    if (log.status === 'sent' && log.sent_at) {
+        return `Dikirim ${formatTime(log.sent_at)}`;
+    } else if (log.status === 'pending' && log.timeLeftMs !== undefined) {
+        if (log.timeLeftMs <= 0) {
+            return 'Sedang dikirim...';
+        }
+        return `~${formatTimeLeft(log.timeLeftMs)}`;
+    } else if (log.status === 'failed') {
+        return log.error_message ? log.error_message.substring(0, 30) : formatTime(log.created_at);
+    } else if (log.status === 'skipped') {
+        return log.skip_reason || formatTime(log.created_at);
+    }
+    return formatTime(log.created_at);
+}
+
+function formatTime(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    
+    if (isToday) {
+        return date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    } else {
+        return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    }
+}
+
+function formatTimeLeft(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    if (hours > 0) {
+        return `${hours}j ${minutes}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds}d`;
+    } else {
+        return `${seconds}d`;
+    }
 }
 
 // ===== WHATSAPP =====
@@ -348,6 +578,22 @@ function updateWhatsAppStatus(data) {
             }
             if (btnScan) btnScan.classList.add('hidden');
             if (btnDisconnect) btnDisconnect.classList.remove('hidden');
+            break;
+        
+        case 'syncing':
+            dot.classList.add('status-connecting');
+            text.textContent = 'Syncing...';
+            if (title) title.textContent = 'Sinkronisasi dengan HP...';
+            if (desc) desc.textContent = 'WA Business butuh ±90 detik untuk sync. JANGAN tutup WhatsApp di HP!';
+            if (icon) icon.innerHTML = '<i data-lucide="refresh-cw" class="w-10 h-10 text-blue-500 animate-spin"></i>';
+            if (qrContainer) qrContainer.classList.add('hidden');
+            if (connectedInfo) {
+                connectedInfo.classList.remove('hidden');
+                document.getElementById('waConnectedName').textContent = data.name || 'Syncing...';
+                document.getElementById('waConnectedPhone').textContent = data.phone ? `+${data.phone}` : 'Menunggu...';
+            }
+            if (btnScan) btnScan.classList.add('hidden');
+            if (btnDisconnect) btnDisconnect.classList.add('hidden');
             break;
             
         case 'qr_ready':
@@ -1038,7 +1284,7 @@ function closeModal(id) {
     document.getElementById(id).classList.remove('active');
 }
 
-function showToast(message, type = 'info') {
+function showToast(message, type = 'info', duration = 3000) {
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
     
@@ -1057,7 +1303,7 @@ function showToast(message, type = 'info') {
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, duration);
 }
 
 function renderPagination(containerId, pagination, callback) {

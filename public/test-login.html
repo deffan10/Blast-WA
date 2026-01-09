@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Login</title>
+</head>
+<body>
+    <h1>Test Login</h1>
+    <form id="form">
+        <input type="email" id="email" value="admin@blasta.com"><br><br>
+        <input type="password" id="password" value="admin123"><br><br>
+        <button type="submit">Login</button>
+    </form>
+    <pre id="result"></pre>
+    
+    <script>
+        // Clear localStorage first
+        localStorage.removeItem('token');
+        console.log('localStorage cleared');
+        
+        document.getElementById('form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+                
+                if (data.success) {
+                    localStorage.setItem('token', data.data.token);
+                    alert('Login berhasil! Token tersimpan. Redirect ke dashboard...');
+                    window.location.href = '/';
+                }
+            } catch (error) {
+                document.getElementById('result').textContent = 'Error: ' + error.message;
+            }
+        });
+    </script>
+</body>
+</html>

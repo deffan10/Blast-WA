@@ -1,5 +1,16 @@
 require('dotenv').config();
 
+// Production security checks
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'default-secret-key') {
+    console.error('❌ FATAL: JWT_SECRET must be set in production!');
+    process.exit(1);
+  }
+  if (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD === 'admin123') {
+    console.warn('⚠️ WARNING: Change default admin password in production!');
+  }
+}
+
 module.exports = {
   // Server
   port: process.env.PORT || 3000,

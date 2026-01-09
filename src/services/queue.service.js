@@ -1,4 +1,3 @@
-const Bull = require('bull');
 const config = require('../config');
 const { Contact, BlastCampaign, BlastLog, MessageTemplate, ContactGroup } = require('../models');
 const { 
@@ -13,25 +12,7 @@ const { getBlastDelay, addMessageVariation, sleep } = require('../utils/delay.ut
 
 let io = null;
 
-// Queue configurations
-const queueConfig = {
-  redis: {
-    host: config.redis.host,
-    port: config.redis.port,
-    password: config.redis.password || undefined
-  },
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 5000
-    },
-    removeOnComplete: 100,
-    removeOnFail: 100
-  }
-};
-
-// Create queues
+// Simple in-memory queues (no Redis dependency)
 let validationQueue;
 let blastQueue;
 
@@ -44,58 +25,15 @@ const activeCampaigns = new Map();
 const initQueues = (socketIo) => {
   io = socketIo;
 
-  try {
-    // Validation Queue - for checking WA registration
-    validationQueue = new Bull('wa-validation', queueConfig);
-    
-    // Blast Queue - for sending messages
-    blastQueue = new Bull('wa-blast', queueConfig);
+  // Use simple in-memory queues (more reliable, no Redis dependency)
+  validationQueue = createInMemoryQueue('validation', processValidation);
+  blastQueue = createInMemoryQueue('blast', processBlast);
 
-    // Setup validation queue processor
-    validationQueue.process(async (job) => {
-      const { contactId } = job.data;
-      return await processValidation(contactId);
-    });
-
-    // Setup blast queue processor
-    blastQueue.process(async (job) => {
-      const { campaignId } = job.data;
-      return await processBlast(campaignId);
-    });
-
-    // Validation queue events
-    validationQueue.on('completed', (job, result) => {
-      console.log(`✅ Validation completed for contact ${job.data.contactId}`);
-      emitValidationUpdate(job.data.contactId, result);
-    });
-
-    validationQueue.on('failed', (job, err) => {
-      console.error(`❌ Validation failed for contact ${job.data.contactId}:`, err.message);
-    });
-
-    // Blast queue events
-    blastQueue.on('completed', (job, result) => {
-      console.log(`✅ Blast campaign ${job.data.campaignId} completed`);
-    });
-
-    blastQueue.on('failed', (job, err) => {
-      console.error(`❌ Blast campaign ${job.data.campaignId} failed:`, err.message);
-    });
-
-    console.log('✅ Queue system initialized');
-
-  } catch (error) {
-    console.error('❌ Failed to initialize queues:', error.message);
-    console.log('⚠️  Running without Redis queue (in-memory fallback)');
-    
-    // Fallback to simple in-memory processing
-    validationQueue = createInMemoryQueue('validation', processValidation);
-    blastQueue = createInMemoryQueue('blast', processBlast);
-  }
+  console.log('✅ Queue system initialized (in-memory)');
 };
 
 /**
- * Create in-memory fallback queue
+ * Create in-memory queue with better error handling
  */
 const createInMemoryQueue = (name, processor) => {
   const queue = [];
@@ -108,12 +46,34 @@ const createInMemoryQueue = (name, processor) => {
     while (queue.length > 0) {
       const job = queue.shift();
       try {
-        const result = await processor(job.data.contactId || job.data.campaignId);
+        // Get the ID from data
+        const id = job.data.contactId || job.data.campaignId;
+        console.log(`🔄 Processing ${name} job: ${id}`);
+        
+        const result = await processor(id);
+        
+        console.log(`✅ ${name} job completed: ${id}`);
         if (job.resolve) job.resolve(result);
+        
+        // Emit update for validation
+        if (name === 'validation' && job.data.contactId) {
+          emitValidationUpdate(job.data.contactId, result);
+        }
       } catch (error) {
-        console.error(`Queue ${name} error:`, error.message);
+        console.error(`❌ Queue ${name} error:`, error.message);
         if (job.reject) job.reject(error);
+        
+        // For validation errors, emit failed status
+        if (name === 'validation' && job.data.contactId) {
+          emitValidationUpdate(job.data.contactId, { 
+            success: false, 
+            error: error.message 
+          });
+        }
       }
+      
+      // Small delay between jobs
+      await sleep(500);
     }
 
     processing = false;
@@ -123,7 +83,8 @@ const createInMemoryQueue = (name, processor) => {
     add: (data, options = {}) => {
       return new Promise((resolve, reject) => {
         queue.push({ data, resolve, reject });
-        setTimeout(process, options.delay || 0);
+        // Start processing after delay
+        setTimeout(process, options.delay || 100);
       });
     },
     getJobCounts: async () => ({ waiting: queue.length }),
@@ -144,14 +105,27 @@ const processValidation = async (contactId) => {
   }
 
   const waStatus = getWhatsAppStatus();
+  console.log(`📱 Validating contact ${contactId}, WA status: ${waStatus.status}`);
+  
+  // Only allow validation when fully connected (not syncing or connecting)
   if (waStatus.status !== 'connected') {
-    // Re-queue with delay
-    await sleep(5000);
-    throw new Error('WhatsApp not connected');
+    // Return error instead of throwing
+    const statusMsg = waStatus.status === 'syncing' 
+      ? 'WhatsApp sedang sinkronisasi dengan HP, tunggu beberapa detik...'
+      : 'WhatsApp not connected';
+    console.log(`⚠️ Cannot validate - WhatsApp status: ${waStatus.status}`);
+    return { 
+      success: false, 
+      error: statusMsg,
+      contactId: contactId
+    };
   }
 
   try {
+    console.log(`📱 Checking WA registration for: ${contact.phone_normalized}`);
     const result = await checkWhatsAppRegistration(contact.phone_normalized);
+    
+    console.log(`📱 Registration result:`, result);
     
     await contact.update({
       wa_status: result.registered ? 'registered' : 'not_registered',
@@ -161,12 +135,13 @@ const processValidation = async (contactId) => {
 
     return {
       success: true,
+      contactId: contactId,
       registered: result.registered,
       jid: result.jid
     };
 
   } catch (error) {
-    console.error(`Validation error for ${contact.phone_normalized}:`, error.message);
+    console.error(`❌ Validation error for ${contact.phone_normalized}:`, error.message);
     
     // Mark as unknown on error
     await contact.update({
@@ -174,7 +149,11 @@ const processValidation = async (contactId) => {
       last_validated: new Date()
     });
 
-    throw error;
+    return { 
+      success: false, 
+      error: error.message,
+      contactId: contactId
+    };
   }
 };
 

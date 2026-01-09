@@ -1,6 +1,6 @@
 const { Contact, ContactGroup } = require('../models');
 const { Op } = require('sequelize');
-const xlsx = require('xlsx');
+const ExcelJS = require('exceljs');
 const fs = require('fs');
 const { normalizePhoneNumber } = require('../utils/phone.util');
 const { addToValidationQueue } = require('../services/queue.service');
@@ -361,11 +361,33 @@ class ContactController {
         }
       }
 
-      // Read Excel file
-      const workbook = xlsx.readFile(req.file.path);
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const data = xlsx.utils.sheet_to_json(worksheet);
+      // Read Excel file using ExcelJS
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(req.file.path);
+      const worksheet = workbook.worksheets[0];
+      
+      // Convert to JSON-like format
+      const data = [];
+      const headers = [];
+      
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) {
+          // First row is headers
+          row.eachCell((cell, colNumber) => {
+            headers[colNumber] = cell.value?.toString().toLowerCase().trim() || '';
+          });
+        } else {
+          const rowData = {};
+          row.eachCell((cell, colNumber) => {
+            if (headers[colNumber]) {
+              rowData[headers[colNumber]] = cell.value;
+            }
+          });
+          if (Object.keys(rowData).length > 0) {
+            data.push(rowData);
+          }
+        }
+      });
 
       // Delete uploaded file
       fs.unlinkSync(req.file.path);
