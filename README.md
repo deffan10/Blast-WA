@@ -63,11 +63,15 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 
 ## 📸 Screenshots
 
+<img width="1873" height="948" alt="image" src="https://github.com/user-attachments/assets/77c575a4-dce6-448c-b48d-f2a6ac5e978b" />
+
 ### Login Page
 - Modern gradient design
 - Email & password authentication
 - JWT token-based security
 - Footer credit transparan menyatu dengan gradient
+
+<img width="1868" height="948" alt="image" src="https://github.com/user-attachments/assets/a9809820-de79-45be-9584-8b24da63b7f9" />
 
 ### Dashboard
 - Real-time statistics cards
@@ -76,6 +80,8 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 - 5 campaign terakhir dengan detail progress
 - Recent activity with live countdown
 - Blast statistics with progress bars
+
+<img width="1867" height="949" alt="image" src="https://github.com/user-attachments/assets/cd3c4193-a656-46a8-b67f-11710ded4cf9" />
 
 ### Campaign Management
 - Create new campaign with template selection
