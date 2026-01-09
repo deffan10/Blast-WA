@@ -301,6 +301,9 @@ async function loadDashboard() {
         document.getElementById('statAllFailed').textContent = stats.blast.total.failed;
         document.getElementById('statAllSkipped').textContent = stats.blast.total.skipped;
         
+        // Update pie chart
+        updatePieChart(stats.blast.total.sent, stats.blast.total.failed, stats.blast.total.skipped);
+        
         if (totalAll > 0) {
             document.getElementById('barSent').style.width = `${(stats.blast.total.sent / totalAll) * 100}%`;
             document.getElementById('barFailed').style.width = `${(stats.blast.total.failed / totalAll) * 100}%`;
@@ -310,12 +313,127 @@ async function loadDashboard() {
         // Update WA status
         updateWhatsAppStatus(stats.whatsapp);
         
+        // Render recent campaigns table
+        renderRecentCampaigns(stats.recentCampaigns);
+        
         // Load recent activity with pagination
         await loadRecentActivity();
         
     } catch (error) {
         showToast('Gagal memuat dashboard', 'error');
     }
+}
+
+function updatePieChart(sent, failed, skipped) {
+    const total = sent + failed + skipped;
+    const circumference = 2 * Math.PI * 40; // 251.2
+    
+    document.getElementById('pieTotalCount').textContent = total;
+    
+    if (total === 0) {
+        document.getElementById('pieSent').setAttribute('stroke-dasharray', '0 251.2');
+        document.getElementById('pieFailed').setAttribute('stroke-dasharray', '0 251.2');
+        document.getElementById('pieSkipped').setAttribute('stroke-dasharray', '0 251.2');
+        return;
+    }
+    
+    const sentPct = (sent / total) * circumference;
+    const failedPct = (failed / total) * circumference;
+    const skippedPct = (skipped / total) * circumference;
+    
+    // Set pie segments
+    document.getElementById('pieSent').setAttribute('stroke-dasharray', `${sentPct} ${circumference}`);
+    document.getElementById('pieSent').setAttribute('stroke-dashoffset', '0');
+    
+    document.getElementById('pieFailed').setAttribute('stroke-dasharray', `${failedPct} ${circumference}`);
+    document.getElementById('pieFailed').setAttribute('stroke-dashoffset', `-${sentPct}`);
+    
+    document.getElementById('pieSkipped').setAttribute('stroke-dasharray', `${skippedPct} ${circumference}`);
+    document.getElementById('pieSkipped').setAttribute('stroke-dashoffset', `-${sentPct + failedPct}`);
+}
+
+function renderRecentCampaigns(campaigns) {
+    const tbody = document.getElementById('recentCampaignsTable');
+    if (!tbody) return;
+    
+    if (!campaigns || campaigns.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-gray-500">Belum ada campaign</td></tr>';
+        return;
+    }
+    
+    tbody.innerHTML = campaigns.map(campaign => {
+        const total = campaign.total_contacts || 0;
+        const processed = (campaign.sent_count || 0) + (campaign.failed_count || 0) + (campaign.skipped_count || 0);
+        const progress = total > 0 ? Math.round((processed / total) * 100) : 0;
+        
+        // Calculate duration
+        const duration = getCampaignDuration(campaign);
+        
+        // Status badge
+        const statusBadge = getCampaignStatusBadge(campaign, progress);
+        
+        return `
+            <tr class="border-b hover:bg-gray-50">
+                <td class="py-3 px-2">
+                    <div class="font-medium text-gray-800">${campaign.name}</div>
+                    <div class="text-xs text-gray-500">${campaign.group?.name || '-'}</div>
+                </td>
+                <td class="py-3 px-2 text-gray-600">${campaign.template?.name || '-'}</td>
+                <td class="py-3 px-2">
+                    <div class="text-gray-800">${processed}/${total}</div>
+                    <div class="text-xs text-gray-500">
+                        <span class="text-green-600">${campaign.sent_count || 0}✓</span>
+                        <span class="text-red-600 ml-1">${campaign.failed_count || 0}✗</span>
+                        <span class="text-yellow-600 ml-1">${campaign.skipped_count || 0}⊘</span>
+                    </div>
+                </td>
+                <td class="py-3 px-2">
+                    <div class="flex items-center gap-2">
+                        <div class="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div class="h-full bg-blue-500 rounded-full" style="width: ${progress}%"></div>
+                        </div>
+                        <span class="text-xs text-gray-600">${progress}%</span>
+                    </div>
+                </td>
+                <td class="py-3 px-2 text-gray-600">${duration}</td>
+                <td class="py-3 px-2">${statusBadge}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function getCampaignDuration(campaign) {
+    if (!campaign.started_at) return '-';
+    
+    const start = new Date(campaign.started_at);
+    const end = campaign.completed_at ? new Date(campaign.completed_at) : new Date();
+    const diff = Math.floor((end - start) / 1000); // in seconds
+    
+    if (diff < 60) return `${diff}d`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}d`;
+    const hours = Math.floor(diff / 3600);
+    const mins = Math.floor((diff % 3600) / 60);
+    return `${hours}j ${mins}m`;
+}
+
+function getCampaignStatusBadge(campaign, progress) {
+    const status = campaign.status;
+    
+    // Check if completed (100%)
+    if (progress >= 100 || status === 'completed') {
+        return '<span class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">Selesai</span>';
+    }
+    
+    const badges = {
+        'draft': '<span class="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">Draf</span>',
+        'queued': '<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">Antrian</span>',
+        'running': '<span class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs animate-pulse">Berjalan</span>',
+        'paused': '<span class="px-2 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs">Dijeda</span>',
+        'stopped': '<span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs">Dihentikan</span>',
+        'failed': '<span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs">Gagal</span>'
+    };
+    
+    return badges[status] || `<span class="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">${status}</span>`;
 }
 
 async function loadRecentActivity() {

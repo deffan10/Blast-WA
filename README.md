@@ -49,6 +49,8 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 ### Dashboard Features
 - ✅ **Real-time Status** - Status koneksi WA via WebSocket (Socket.io)
 - ✅ **Statistics** - Statistik pengiriman (sent, failed, skipped)
+- ✅ **Pie Chart Statistik Blast** - Visualisasi donut chart untuk sent/failed/skipped
+- ✅ **5 Campaign Terakhir** - Tabel ringkasan campaign dengan template, kontak, progress, durasi, status
 - ✅ **Activity Log dengan Pagination** - 5 log per halaman, navigasi prev/next
 - ✅ **Live Countdown Timer** - Countdown waktu tersisa untuk pesan pending (real-time)
 - ✅ **Queue Position** - Posisi antrian untuk setiap pesan pending
@@ -68,6 +70,8 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 ### Dashboard
 - Real-time statistics cards
 - WhatsApp connection status indicator
+- Pie chart statistik blast (sent/failed/skipped)
+- 5 campaign terakhir dengan detail progress
 - Recent activity with live countdown
 - Blast statistics with progress bars
 

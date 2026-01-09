@@ -81,6 +81,16 @@ class DashboardController {
         limit: 5
       });
 
+      // Get 5 recent campaigns (all status)
+      const recentCampaigns = await BlastCampaign.findAll({
+        include: [
+          { model: MessageTemplate, as: 'template', attributes: ['name'] },
+          { model: ContactGroup, as: 'group', attributes: ['name'] }
+        ],
+        order: [['created_at', 'DESC']],
+        limit: 5
+      });
+
       // Get WhatsApp session info
       let waSession = await WhatsAppSession.findOne({ 
         where: { session_id: 'default' } 
@@ -115,7 +125,8 @@ class DashboardController {
               skipped: todaySkipped
             }
           },
-          activeCampaigns
+          activeCampaigns,
+          recentCampaigns
         }
       });
 
