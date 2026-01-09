@@ -27,12 +27,14 @@ function checkAuth() {
 function showLogin() {
     document.getElementById('loginPage').classList.remove('hidden');
     document.getElementById('dashboardPage').classList.add('hidden');
+    document.getElementById('dashboardFooter').classList.add('hidden');
 }
 
 // Show dashboard
 function showDashboard() {
     document.getElementById('loginPage').classList.add('hidden');
     document.getElementById('dashboardPage').classList.remove('hidden');
+    document.getElementById('dashboardFooter').classList.remove('hidden');
 }
 
 // Initialize Socket.io
@@ -370,7 +372,7 @@ function renderRecentCampaigns(campaigns) {
         const duration = getCampaignDuration(campaign);
         
         // Status badge
-        const statusBadge = getCampaignStatusBadge(campaign, progress);
+        const statusBadge = getRecentCampaignStatusBadge(campaign, progress);
         
         return `
             <tr class="border-b hover:bg-gray-50">
@@ -416,7 +418,7 @@ function getCampaignDuration(campaign) {
     return `${hours}j ${mins}m`;
 }
 
-function getCampaignStatusBadge(campaign, progress) {
+function getRecentCampaignStatusBadge(campaign, progress) {
     const status = campaign.status;
     
     // Check if completed (100%)
@@ -424,16 +426,8 @@ function getCampaignStatusBadge(campaign, progress) {
         return '<span class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">Selesai</span>';
     }
     
-    const badges = {
-        'draft': '<span class="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">Draf</span>',
-        'queued': '<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">Antrian</span>',
-        'running': '<span class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs animate-pulse">Berjalan</span>',
-        'paused': '<span class="px-2 py-1 bg-yellow-100 text-yellow-700 rounded-full text-xs">Dijeda</span>',
-        'stopped': '<span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs">Dihentikan</span>',
-        'failed': '<span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs">Gagal</span>'
-    };
-    
-    return badges[status] || `<span class="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">${status}</span>`;
+    // Everything else is "Proses"
+    return '<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs animate-pulse">Proses</span>';
 }
 
 async function loadRecentActivity() {
