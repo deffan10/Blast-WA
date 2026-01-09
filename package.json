@@ -1,0 +1,37 @@
+{
+  "name": "blast-wa",
+  "version": "1.0.0",
+  "description": "WhatsApp Blast Application with Anti-Ban Strategy",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "migrate": "npx sequelize-cli db:migrate",
+    "seed": "npx sequelize-cli db:seed:all",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.6.0",
+    "bcryptjs": "^2.4.3",
+    "bull": "^4.12.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.6.5",
+    "pino": "^8.17.2",
+    "qrcode": "^1.5.3",
+    "sequelize": "^6.35.2",
+    "socket.io": "^4.7.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "sequelize-cli": "^6.6.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

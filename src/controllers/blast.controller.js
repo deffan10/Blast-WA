@@ -1,0 +1,438 @@
+const { Op } = require('sequelize');
+const { 
+  BlastCampaign, 
+  BlastLog, 
+  Contact, 
+  ContactGroup, 
+  MessageTemplate 
+} = require('../models');
+const { addToBlastQueue, pauseBlastQueue, resumeBlastQueue, stopBlastQueue } = require('../services/queue.service');
+const { getWhatsAppStatus } = require('../services/whatsapp.service');
+
+class BlastController {
+  // Get all campaigns
+  async getCampaigns(req, res) {
+    try {
+      const { page = 1, limit = 20, status } = req.query;
+      const offset = (page - 1) * limit;
+
+      const where = {};
+      if (status) {
+        where.status = status;
+      }
+
+      const { rows: campaigns, count: total } = await BlastCampaign.findAndCountAll({
+        where,
+        include: [
+          { model: MessageTemplate, as: 'template', attributes: ['id', 'name'] },
+          { model: ContactGroup, as: 'group', attributes: ['id', 'name'] }
+        ],
+        order: [['created_at', 'DESC']],
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      });
+
+      res.json({
+        success: true,
+        data: {
+          campaigns,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Get campaigns error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get campaigns'
+      });
+    }
+  }
+
+  // Get single campaign with logs
+  async getCampaign(req, res) {
+    try {
+      const { id } = req.params;
+
+      const campaign = await BlastCampaign.findByPk(id, {
+        include: [
+          { model: MessageTemplate, as: 'template' },
+          { model: ContactGroup, as: 'group' }
+        ]
+      });
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: campaign
+      });
+
+    } catch (error) {
+      console.error('Get campaign error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get campaign'
+      });
+    }
+  }
+
+  // Get campaign logs
+  async getCampaignLogs(req, res) {
+    try {
+      const { id } = req.params;
+      const { page = 1, limit = 50, status } = req.query;
+      const offset = (page - 1) * limit;
+
+      const where = { campaign_id: id };
+      if (status) {
+        where.status = status;
+      }
+
+      const { rows: logs, count: total } = await BlastLog.findAndCountAll({
+        where,
+        order: [['created_at', 'DESC']],
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      });
+
+      res.json({
+        success: true,
+        data: {
+          logs,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Get campaign logs error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get campaign logs'
+      });
+    }
+  }
+
+  // Create and start blast campaign
+  async createCampaign(req, res) {
+    try {
+      const { name, template_id, group_id, interval_minutes = 5 } = req.body;
+
+      // Validate inputs
+      if (!name || !template_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Name and template are required'
+        });
+      }
+
+      // Check WhatsApp connection
+      const waStatus = getWhatsAppStatus();
+      if (waStatus.status !== 'connected') {
+        return res.status(400).json({
+          success: false,
+          message: 'WhatsApp is not connected. Please scan QR code first.'
+        });
+      }
+
+      // Validate template
+      const template = await MessageTemplate.findByPk(template_id);
+      if (!template || !template.is_active) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid template'
+        });
+      }
+
+      // Validate group if provided
+      if (group_id) {
+        const group = await ContactGroup.findByPk(group_id);
+        if (!group || !group.is_active) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid group'
+          });
+        }
+      }
+
+      // Get target contacts
+      const contactWhere = {
+        is_active: true,
+        wa_status: 'registered' // Only registered WA numbers
+      };
+
+      if (group_id) {
+        contactWhere.group_id = group_id;
+      }
+
+      const contacts = await Contact.findAll({
+        where: contactWhere,
+        include: [{
+          model: ContactGroup,
+          as: 'group',
+          attributes: ['name']
+        }]
+      });
+
+      if (contacts.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No eligible contacts found (must have registered WhatsApp)'
+        });
+      }
+
+      // Create campaign
+      const campaign = await BlastCampaign.create({
+        name,
+        template_id,
+        group_id: group_id || null,
+        interval_minutes,
+        total_contacts: contacts.length,
+        status: 'queued'
+      });
+
+      // Create log entries for all contacts
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      for (const contact of contacts) {
+        // Check if already sent today
+        const alreadySent = await BlastLog.findOne({
+          where: {
+            contact_id: contact.id,
+            status: 'sent',
+            sent_at: { [Op.gte]: today }
+          }
+        });
+
+        await BlastLog.create({
+          campaign_id: campaign.id,
+          contact_id: contact.id,
+          phone: contact.phone_normalized,
+          name: contact.name,
+          status: alreadySent ? 'skipped' : 'pending',
+          skip_reason: alreadySent ? 'already_sent_today' : null
+        });
+
+        if (alreadySent) {
+          campaign.skipped_count++;
+        }
+      }
+
+      await campaign.save();
+
+      // Add to blast queue
+      addToBlastQueue(campaign.id);
+
+      res.status(201).json({
+        success: true,
+        message: `Campaign created. ${contacts.length} contacts queued for blast.`,
+        data: campaign
+      });
+
+    } catch (error) {
+      console.error('Create campaign error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to create campaign'
+      });
+    }
+  }
+
+  // Pause campaign
+  async pauseCampaign(req, res) {
+    try {
+      const { id } = req.params;
+
+      const campaign = await BlastCampaign.findByPk(id);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+
+      if (campaign.status !== 'running' && campaign.status !== 'queued') {
+        return res.status(400).json({
+          success: false,
+          message: 'Campaign is not running'
+        });
+      }
+
+      pauseBlastQueue(campaign.id);
+      await campaign.update({ status: 'paused' });
+
+      res.json({
+        success: true,
+        message: 'Campaign paused',
+        data: campaign
+      });
+
+    } catch (error) {
+      console.error('Pause campaign error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to pause campaign'
+      });
+    }
+  }
+
+  // Resume campaign
+  async resumeCampaign(req, res) {
+    try {
+      const { id } = req.params;
+
+      const campaign = await BlastCampaign.findByPk(id);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+
+      if (campaign.status !== 'paused') {
+        return res.status(400).json({
+          success: false,
+          message: 'Campaign is not paused'
+        });
+      }
+
+      // Check WhatsApp connection
+      const waStatus = getWhatsAppStatus();
+      if (waStatus.status !== 'connected') {
+        return res.status(400).json({
+          success: false,
+          message: 'WhatsApp is not connected'
+        });
+      }
+
+      resumeBlastQueue(campaign.id);
+      await campaign.update({ status: 'running' });
+
+      res.json({
+        success: true,
+        message: 'Campaign resumed',
+        data: campaign
+      });
+
+    } catch (error) {
+      console.error('Resume campaign error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to resume campaign'
+      });
+    }
+  }
+
+  // Stop campaign
+  async stopCampaign(req, res) {
+    try {
+      const { id } = req.params;
+
+      const campaign = await BlastCampaign.findByPk(id);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+
+      if (!['running', 'queued', 'paused'].includes(campaign.status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Campaign cannot be stopped'
+        });
+      }
+
+      stopBlastQueue(campaign.id);
+      
+      // Update remaining pending logs to skipped
+      await BlastLog.update(
+        { status: 'skipped', skip_reason: 'campaign_stopped' },
+        { 
+          where: { 
+            campaign_id: id, 
+            status: 'pending' 
+          } 
+        }
+      );
+
+      await campaign.update({ 
+        status: 'stopped',
+        completed_at: new Date()
+      });
+
+      res.json({
+        success: true,
+        message: 'Campaign stopped',
+        data: campaign
+      });
+
+    } catch (error) {
+      console.error('Stop campaign error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to stop campaign'
+      });
+    }
+  }
+
+  // Delete campaign
+  async deleteCampaign(req, res) {
+    try {
+      const { id } = req.params;
+
+      const campaign = await BlastCampaign.findByPk(id);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+
+      // Stop if running
+      if (['running', 'queued', 'paused'].includes(campaign.status)) {
+        stopBlastQueue(campaign.id);
+      }
+
+      // Delete logs
+      await BlastLog.destroy({ where: { campaign_id: id } });
+
+      // Delete campaign
+      await campaign.destroy();
+
+      res.json({
+        success: true,
+        message: 'Campaign deleted'
+      });
+
+    } catch (error) {
+      console.error('Delete campaign error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to delete campaign'
+      });
+    }
+  }
+}
+
+module.exports = new BlastController();
