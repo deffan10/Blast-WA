@@ -4,6 +4,10 @@ const contactController = require('../controllers/contact.controller');
 const { authMiddleware } = require('../middleware/auth.middleware');
 const { uploadExcel } = require('../middleware/upload.middleware');
 
+// Public route - no auth needed
+router.get('/template', contactController.downloadTemplate);
+
+// Protected routes
 router.use(authMiddleware);
 
 router.get('/', contactController.getAll);

@@ -35,12 +35,12 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 - ✅ **QR Code Authentication** - Login via scan QR dari HP
 - ✅ **Session Persistence** - Session tersimpan, tidak perlu scan ulang setiap restart
 - ✅ **Bulk Messaging** - Kirim pesan ke banyak kontak sekaligus
-- ✅ **Contact Management** - Import CSV/Excel, grup kontak, validasi nomor WA
-- ✅ **Message Templates** - Template dengan variabel `{{nama}}`, `{{no_hp}}`, `{{group}}`
-- ✅ **Campaign Management** - Buat, jalankan, pause, resume, stop campaign
+- ✅ **Contact Management** - Import Excel dengan template download, grup kontak, validasi nomor WA
+- ✅ **Message Templates** - Template dengan variabel `{{nama}}`, `{{no_hp}}`, `{{group}}` dan tracking penggunaan
+- ✅ **Campaign Management** - Buat, jalankan, pause, resume, stop campaign dengan status dan durasi
 
 ### Anti-Ban Features
-- ✅ **Random Delay** - Jeda acak antar pesan (5-15 menit default)
+- ✅ **Random Delay** - Jeda acak antar pesan (1-15 menit, termasuk 1 menit untuk testing)
 - ✅ **Daily Limit** - Batas pesan per hari (default 100)
 - ✅ **Message Variation** - Variasi pesan otomatis (spasi invisible)
 - ✅ **Consecutive Error Stop** - Stop otomatis jika 5 error berturut
@@ -52,6 +52,8 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 - ✅ **Activity Log dengan Pagination** - 5 log per halaman, navigasi prev/next
 - ✅ **Live Countdown Timer** - Countdown waktu tersisa untuk pesan pending (real-time)
 - ✅ **Queue Position** - Posisi antrian untuk setiap pesan pending
+- ✅ **Campaign Status & Duration** - Status otomatis "Selesai" saat 100%, tampilan durasi campaign
+- ✅ **Template Usage Counter** - Tracking penggunaan template pesan
 - ✅ **Responsive UI** - Tailwind CSS, Lucide Icons, mobile-friendly
 
 ---
@@ -931,7 +933,9 @@ Jika mengalami masalah atau butuh bantuan:
 
 ---
 
-**Made with ❤️ for Indonesian developers**
+## 👨‍💻 Credits
+
+**Build with ❤️ + AI by [@deffnotjeff](https://instagram.com/deffnotjeff)**
 
 ```
 Blast-WA/

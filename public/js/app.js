@@ -101,7 +101,10 @@ function initEventListeners() {
     
     // Contact buttons
     document.getElementById('btnAddContact').addEventListener('click', () => openContactModal());
-    document.getElementById('btnImportContacts').addEventListener('click', () => openModal('importModal'));
+    document.getElementById('btnImportContacts').addEventListener('click', () => {
+        openModal('importModal');
+        setTimeout(() => lucide.createIcons(), 100);
+    });
     document.getElementById('btnValidateAll').addEventListener('click', handleValidateAll);
     document.getElementById('searchContacts').addEventListener('input', debounce(loadContacts, 500));
     document.getElementById('filterGroup').addEventListener('change', loadContacts);
@@ -1141,7 +1144,15 @@ function renderCampaigns(campaigns) {
         return;
     }
     
-    container.innerHTML = campaigns.map(c => `
+    container.innerHTML = campaigns.map(c => {
+        const progress = c.total_contacts > 0 
+            ? Math.round(((c.sent_count + c.failed_count + c.skipped_count) / c.total_contacts) * 100) 
+            : 0;
+        const isComplete = progress >= 100;
+        const displayStatus = isComplete && c.status === 'running' ? 'completed' : c.status;
+        const duration = getCampaignDuration(c);
+        
+        return `
         <div class="p-4 hover:bg-gray-50 transition">
             <div class="flex items-center justify-between">
                 <div>
@@ -1151,14 +1162,19 @@ function renderCampaigns(campaigns) {
                     </p>
                 </div>
                 <div class="flex items-center gap-3">
-                    <span class="px-2 py-1 text-xs font-medium rounded ${getCampaignStatusBadge(c.status)}">${c.status}</span>
+                    <span class="px-2 py-1 text-xs font-medium rounded ${getCampaignStatusBadge(displayStatus)}">
+                        ${getCampaignStatusLabel(displayStatus)}
+                    </span>
                     ${getCampaignActions(c)}
                 </div>
             </div>
             <div class="mt-3">
                 <div class="flex justify-between text-xs text-gray-500 mb-1">
                     <span>${c.sent_count + c.failed_count + c.skipped_count} / ${c.total_contacts}</span>
-                    <span>${Math.round(((c.sent_count + c.failed_count + c.skipped_count) / c.total_contacts) * 100) || 0}%</span>
+                    <span class="flex items-center gap-2">
+                        ${duration ? `<span class="text-gray-400"><i data-lucide="clock" class="w-3 h-3 inline"></i> ${duration}</span>` : ''}
+                        <span>${progress}%</span>
+                    </span>
                 </div>
                 <div class="h-2 bg-gray-200 rounded-full overflow-hidden flex">
                     <div class="h-full bg-green-500" style="width: ${(c.sent_count / c.total_contacts) * 100}%"></div>
@@ -1172,9 +1188,42 @@ function renderCampaigns(campaigns) {
                 </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
     
     lucide.createIcons();
+}
+
+function getCampaignDuration(campaign) {
+    if (!campaign.started_at) return null;
+    
+    const start = new Date(campaign.started_at);
+    const end = campaign.completed_at ? new Date(campaign.completed_at) : new Date();
+    const diffMs = end - start;
+    
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+    
+    if (hours > 0) {
+        return `${hours}j ${minutes}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds}d`;
+    } else {
+        return `${seconds}d`;
+    }
+}
+
+function getCampaignStatusLabel(status) {
+    const labels = {
+        draft: 'Draft',
+        queued: 'Antrian',
+        running: 'Berjalan',
+        paused: 'Dijeda',
+        completed: 'Selesai',
+        stopped: 'Dihentikan',
+        failed: 'Gagal'
+    };
+    return labels[status] || status;
 }
 
 function getCampaignStatusBadge(status) {

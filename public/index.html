@@ -410,7 +410,8 @@
                                         <label class="block text-sm font-medium text-gray-700 mb-2">Interval Kirim</label>
                                         <select id="blastInterval"
                                             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-                                            <option value="5">5 Menit</option>
+                                            <option value="1">1 Menit (Testing)</option>
+                                            <option value="5" selected>5 Menit</option>
                                             <option value="10">10 Menit</option>
                                             <option value="15">15 Menit</option>
                                         </select>
@@ -479,13 +480,18 @@
     <!-- Import Modal -->
     <div id="importModal" class="modal fixed inset-0 z-50 items-center justify-center bg-black bg-opacity-50">
         <div class="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
-            <div class="p-6 border-b">
+            <div class="p-6 border-b flex justify-between items-center">
                 <h3 class="font-semibold text-lg">Import Kontak dari Excel</h3>
+                <a href="/api/contacts/template" download="template_kontak.xlsx" 
+                   class="inline-flex items-center gap-1 px-3 py-1.5 bg-green-500 text-white text-sm rounded-lg hover:bg-green-600 transition">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    Template
+                </a>
             </div>
             <form id="importForm" class="p-6 space-y-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">File Excel</label>
-                    <input type="file" id="importFile" required accept=".xlsx,.xls,.csv"
+                    <label class="block text-sm font-medium text-gray-700 mb-2">File Excel (.xlsx, .xls)</label>
+                    <input type="file" id="importFile" required accept=".xlsx,.xls"
                         class="w-full px-4 py-2 border border-gray-300 rounded-lg">
                 </div>
                 <div>
@@ -496,12 +502,13 @@
                     </select>
                 </div>
                 <div class="bg-blue-50 rounded-lg p-4">
-                    <p class="text-sm text-blue-800 font-medium mb-2">Format Kolom Excel:</p>
+                    <p class="text-sm text-blue-800 font-medium mb-2">📋 Format Kolom Excel:</p>
                     <ul class="text-sm text-blue-700 space-y-1">
-                        <li>• <strong>nama</strong> - Nama kontak</li>
-                        <li>• <strong>no_hp</strong> - Nomor HP</li>
+                        <li>• <strong>nama</strong> - Nama kontak (wajib)</li>
+                        <li>• <strong>no_hp</strong> - Nomor HP (wajib)</li>
                         <li>• <strong>group</strong> - Nama grup (opsional)</li>
                     </ul>
+                    <p class="text-xs text-blue-600 mt-2">💡 Download template untuk contoh format yang benar</p>
                 </div>
                 <div class="flex gap-3 pt-4">
                     <button type="button" class="flex-1 px-4 py-2 border border-gray-300 rounded-lg font-medium hover:bg-gray-50 transition" onclick="closeModal('importModal')">Batal</button>
@@ -576,6 +583,15 @@
             </form>
         </div>
     </div>
+
+    <!-- Footer -->
+    <footer class="fixed bottom-0 left-64 right-0 bg-white border-t border-gray-200 py-3 text-center z-30">
+        <p class="text-sm text-gray-500">
+            Build with <span class="text-red-500">❤</span> + <span class="text-blue-500">AI</span> by 
+            <a href="https://instagram.com/deffnotjeff" target="_blank" rel="noopener noreferrer" 
+               class="text-blue-600 hover:text-blue-800 font-medium hover:underline">@deffnotjeff</a>
+        </p>
+    </footer>
 
     <!-- Toast Container -->
     <div id="toastContainer" class="fixed top-4 right-4 z-50 space-y-2"></div>

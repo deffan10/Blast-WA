@@ -6,6 +6,72 @@ const { normalizePhoneNumber } = require('../utils/phone.util');
 const { addToValidationQueue } = require('../services/queue.service');
 
 class ContactController {
+  // Download template Excel untuk import kontak
+  async downloadTemplate(req, res) {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Blast WA';
+      workbook.created = new Date();
+
+      const worksheet = workbook.addWorksheet('Kontak');
+
+      // Set columns
+      worksheet.columns = [
+        { header: 'nama', key: 'nama', width: 30 },
+        { header: 'no_hp', key: 'no_hp', width: 20 },
+        { header: 'group', key: 'group', width: 25 }
+      ];
+
+      // Style header row
+      worksheet.getRow(1).font = { bold: true };
+      worksheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF3B82F6' }
+      };
+      worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+
+      // Add sample data
+      worksheet.addRow({ nama: 'John Doe', no_hp: '081234567890', group: 'Customer' });
+      worksheet.addRow({ nama: 'Jane Smith', no_hp: '628987654321', group: 'VIP' });
+      worksheet.addRow({ nama: 'Budi Santoso', no_hp: '08551234567', group: '' });
+
+      // Add notes worksheet
+      const notesSheet = workbook.addWorksheet('Petunjuk');
+      notesSheet.columns = [
+        { header: 'Informasi', key: 'info', width: 60 }
+      ];
+      notesSheet.getRow(1).font = { bold: true };
+      notesSheet.addRow({ info: '📋 FORMAT KOLOM:' });
+      notesSheet.addRow({ info: '• nama - Nama kontak (wajib)' });
+      notesSheet.addRow({ info: '• no_hp - Nomor HP (wajib), format: 08xx atau 628xx' });
+      notesSheet.addRow({ info: '• group - Nama grup (opsional), grup baru akan dibuat otomatis' });
+      notesSheet.addRow({ info: '' });
+      notesSheet.addRow({ info: '📄 FORMAT FILE:' });
+      notesSheet.addRow({ info: '• Excel (.xlsx, .xls) - Disarankan' });
+      notesSheet.addRow({ info: '• CSV - Delimiter: koma (,) atau titik koma (;)' });
+      notesSheet.addRow({ info: '' });
+      notesSheet.addRow({ info: '⚠️ CATATAN:' });
+      notesSheet.addRow({ info: '• Nomor duplikat akan di-skip' });
+      notesSheet.addRow({ info: '• Validasi WA dilakukan otomatis setelah import' });
+
+      // Set response headers
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=template_kontak.xlsx');
+
+      // Write to response
+      await workbook.xlsx.write(res);
+      res.end();
+
+    } catch (error) {
+      console.error('Download template error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to generate template'
+      });
+    }
+  }
+
   // Get all contacts with pagination and filters
   async getAll(req, res) {
     try {
@@ -338,17 +404,50 @@ class ContactController {
     }
   }
 
-  // Import contacts from Excel
+  // Helper function to parse CSV with auto-detect delimiter
+  parseCSV(content) {
+    const lines = content.split(/\r?\n/).filter(line => line.trim());
+    if (lines.length === 0) return [];
+
+    // Auto-detect delimiter: check first line for ; or ,
+    const firstLine = lines[0];
+    const semicolonCount = (firstLine.match(/;/g) || []).length;
+    const commaCount = (firstLine.match(/,/g) || []).length;
+    const delimiter = semicolonCount > commaCount ? ';' : ',';
+
+    console.log(`CSV delimiter detected: "${delimiter}" (semicolons: ${semicolonCount}, commas: ${commaCount})`);
+
+    // Parse headers
+    const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+    
+    // Parse data rows
+    const data = [];
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(delimiter).map(v => v.trim().replace(/['"]/g, ''));
+      if (values.length >= 2) {
+        const row = {};
+        headers.forEach((header, index) => {
+          row[header] = values[index] || '';
+        });
+        data.push(row);
+      }
+    }
+
+    return data;
+  }
+
+  // Import contacts from Excel/CSV
   async importExcel(req, res) {
     try {
       if (!req.file) {
         return res.status(400).json({
           success: false,
-          message: 'Please upload an Excel file'
+          message: 'Please upload an Excel or CSV file'
         });
       }
 
       const { group_id } = req.body;
+      const fileExt = req.file.originalname.split('.').pop().toLowerCase();
 
       // Validate group if provided
       if (group_id) {
@@ -361,41 +460,49 @@ class ContactController {
         }
       }
 
-      // Read Excel file using ExcelJS
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.readFile(req.file.path);
-      const worksheet = workbook.worksheets[0];
-      
-      // Convert to JSON-like format
-      const data = [];
-      const headers = [];
-      
-      worksheet.eachRow((row, rowNumber) => {
-        if (rowNumber === 1) {
-          // First row is headers
-          row.eachCell((cell, colNumber) => {
-            headers[colNumber] = cell.value?.toString().toLowerCase().trim() || '';
-          });
-        } else {
-          const rowData = {};
-          row.eachCell((cell, colNumber) => {
-            if (headers[colNumber]) {
-              rowData[headers[colNumber]] = cell.value;
-            }
-          });
-          if (Object.keys(rowData).length > 0) {
-            data.push(rowData);
-          }
-        }
-      });
+      let data = [];
 
-      // Delete uploaded file
-      fs.unlinkSync(req.file.path);
+      if (fileExt === 'csv') {
+        // Read CSV file with auto-detect delimiter
+        const fileContent = fs.readFileSync(req.file.path, 'utf-8');
+        data = this.parseCSV(fileContent);
+        fs.unlinkSync(req.file.path);
+      } else {
+        // Read Excel file using ExcelJS
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(req.file.path);
+        const worksheet = workbook.worksheets[0];
+        
+        // Convert to JSON-like format
+        const headers = [];
+        
+        worksheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) {
+            // First row is headers
+            row.eachCell((cell, colNumber) => {
+              headers[colNumber] = cell.value?.toString().toLowerCase().trim() || '';
+            });
+          } else {
+            const rowData = {};
+            row.eachCell((cell, colNumber) => {
+              if (headers[colNumber]) {
+                rowData[headers[colNumber]] = cell.value;
+              }
+            });
+            if (Object.keys(rowData).length > 0) {
+              data.push(rowData);
+            }
+          }
+        });
+
+        // Delete uploaded file
+        fs.unlinkSync(req.file.path);
+      }
 
       if (data.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Excel file is empty'
+          message: 'File is empty or has no valid data'
         });
       }
 

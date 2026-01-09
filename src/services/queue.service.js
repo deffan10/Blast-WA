@@ -274,6 +274,11 @@ const processBlast = async (campaignId) => {
       campaign.sent_count++;
       await campaign.save();
 
+      // Increment template usage count
+      if (campaign.template) {
+        await campaign.template.increment('usage_count');
+      }
+
       // Increment daily counter
       await incrementMessageCounter();
 
