@@ -447,10 +447,6 @@ async function loadRecentActivity() {
         
         const logsEl = document.getElementById('recentLogs');
         const paginationEl = document.getElementById('activityPagination');
-        const infoEl = document.getElementById('activityInfo');
-        const pageInfoEl = document.getElementById('activityPageInfo');
-        const btnPrev = document.getElementById('btnPrevActivity');
-        const btnNext = document.getElementById('btnNextActivity');
         
         // Check if elements exist
         if (!logsEl) {
@@ -467,22 +463,14 @@ async function loadRecentActivity() {
             // Show pagination if elements exist
             if (paginationEl) {
                 paginationEl.classList.remove('hidden');
-            }
-            if (infoEl) {
-                infoEl.textContent = `${pagination.totalLogs} total`;
-            }
-            if (pageInfoEl) {
-                pageInfoEl.textContent = `Hal ${pagination.page} dari ${pagination.totalPages}`;
-            }
-            
-            // Update buttons
-            if (btnPrev) {
-                btnPrev.disabled = !pagination.hasPrev;
-                btnPrev.onclick = () => { activityPage--; loadRecentActivity(); };
-            }
-            if (btnNext) {
-                btnNext.disabled = !pagination.hasNext;
-                btnNext.onclick = () => { activityPage++; loadRecentActivity(); };
+                renderPagination('activityPagination', {
+                    page: pagination.page,
+                    totalPages: pagination.totalPages,
+                    total: pagination.totalLogs
+                }, (newPage) => {
+                    activityPage = newPage;
+                    loadRecentActivity();
+                });
             }
             
         } else {
