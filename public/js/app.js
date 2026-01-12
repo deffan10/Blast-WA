@@ -4,6 +4,7 @@
 const API_BASE = '/api';
 let token = localStorage.getItem('token');
 let socket = null;
+let activityFilter = '';
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
@@ -440,8 +441,6 @@ function getRecentCampaignStatusBadge(campaign, progress) {
     // Everything else is "Proses"
     return '<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs animate-pulse">Proses</span>';
 }
-
-let activityFilter = '';
 
 async function loadRecentActivity() {
     try {
