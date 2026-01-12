@@ -653,15 +653,22 @@ function formatTime(dateStr) {
 
 function formatTimeLeft(ms) {
     const totalSeconds = Math.floor(ms / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
     
-    if (hours > 0) {
+    if (days > 0) {
+        // More than 24 hours: show days and hours
+        return `${days}h ${hours}j`;
+    } else if (hours > 0) {
+        // More than 1 hour: show hours and minutes
         return `${hours}j ${minutes}m`;
     } else if (minutes > 0) {
+        // More than 1 minute: show minutes and seconds
         return `${minutes}m ${seconds}d`;
     } else {
+        // Less than 1 minute: show seconds only
         return `${seconds}d`;
     }
 }
