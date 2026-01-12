@@ -490,9 +490,8 @@ async function loadRecentActivity() {
             }
             
         } else {
-            logsEl.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Belum ada aktivitas</p>';
+            logsEl.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Tidak ada data untuk filter ini</p>';
             if (paginationEl) paginationEl.classList.add('hidden');
-            if (infoEl) infoEl.textContent = '';
             stopCountdownTimer();
         }
         
@@ -500,8 +499,10 @@ async function loadRecentActivity() {
         console.error('Load activity error:', error);
         const logsEl = document.getElementById('recentLogs');
         if (logsEl) {
-            logsEl.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Gagal memuat aktivitas</p>';
+            logsEl.innerHTML = '<p class="text-red-500 text-sm text-center py-4">Gagal memuat aktivitas</p>';
         }
+        const paginationEl = document.getElementById('activityPagination');
+        if (paginationEl) paginationEl.classList.add('hidden');
         stopCountdownTimer();
     }
 }
