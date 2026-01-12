@@ -451,7 +451,9 @@ async function loadRecentActivity() {
         const filterParam = activityFilter ? `&filter=${activityFilter}` : '';
         console.log('Loading activity with filter:', activityFilter, 'URL:', `/dashboard/activity?page=${activityPage}&limit=${ACTIVITY_LIMIT}${filterParam}`);
         const data = await apiCall(`/dashboard/activity?page=${activityPage}&limit=${ACTIVITY_LIMIT}${filterParam}`);
+        console.log('Activity response:', data);
         const { logs, pagination } = data.data;
+        console.log('Logs count:', logs?.length, 'Total:', pagination?.totalLogs);
         
         // Store logs with fetch timestamp for countdown calculation
         activityLogs = logs ? logs.map(log => ({
