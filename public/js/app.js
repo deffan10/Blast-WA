@@ -131,11 +131,15 @@ function initEventListeners() {
     document.getElementById('btnClearQueue').addEventListener('click', clearBlastQueue);
 
     // Activity filter
-    document.getElementById('activityFilter').addEventListener('change', (e) => {
-        activityFilter = e.target.value;
-        activityPage = 1; // Reset to first page
-        loadRecentActivity();
-    });
+    const activityFilterEl = document.getElementById('activityFilter');
+    if (activityFilterEl) {
+        activityFilterEl.addEventListener('change', function(e) {
+            console.log('Filter changed:', e.target.value);
+            activityFilter = e.target.value;
+            activityPage = 1; // Reset to first page
+            loadRecentActivity();
+        });
+    }
 }
 
 // ===== API HELPERS =====
@@ -445,6 +449,7 @@ function getRecentCampaignStatusBadge(campaign, progress) {
 async function loadRecentActivity() {
     try {
         const filterParam = activityFilter ? `&filter=${activityFilter}` : '';
+        console.log('Loading activity with filter:', activityFilter, 'URL:', `/dashboard/activity?page=${activityPage}&limit=${ACTIVITY_LIMIT}${filterParam}`);
         const data = await apiCall(`/dashboard/activity?page=${activityPage}&limit=${ACTIVITY_LIMIT}${filterParam}`);
         const { logs, pagination } = data.data;
         
