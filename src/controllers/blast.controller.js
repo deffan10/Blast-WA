@@ -6,7 +6,7 @@ const {
   ContactGroup, 
   MessageTemplate 
 } = require('../models');
-const { addToBlastQueue, pauseBlastQueue, resumeBlastQueue, stopBlastQueue } = require('../services/queue.service');
+const { addToBlastQueue, pauseBlastQueue, resumeBlastQueue, stopBlastQueue, getQueueStats } = require('../services/queue.service');
 const { getWhatsAppStatus } = require('../services/whatsapp.service');
 
 class BlastController {
@@ -430,6 +430,94 @@ class BlastController {
       res.status(500).json({
         success: false,
         message: 'Failed to delete campaign'
+      });
+    }
+  }
+
+  // Get blast process status
+  async getProcessStatus(req, res) {
+    try {
+      // Get queue stats
+      const queueStats = await getQueueStats();
+
+      // Get active/running campaigns
+      const activeCampaigns = await BlastCampaign.findAll({
+        where: {
+          status: ['running', 'queued', 'paused']
+        },
+        include: [
+          { model: MessageTemplate, as: 'template', attributes: ['id', 'name'] },
+          { model: ContactGroup, as: 'group', attributes: ['id', 'name'] }
+        ],
+        order: [['created_at', 'DESC']]
+      });
+
+      // Get pending logs (scheduled but not sent)
+      const pendingLogs = await BlastLog.findAll({
+        where: {
+          status: 'pending'
+        },
+        include: [
+          { model: Contact, as: 'contact', attributes: ['id', 'name', 'phone'] },
+          { model: BlastCampaign, as: 'campaign', attributes: ['id', 'name'] }
+        ],
+        order: [['scheduled_at', 'ASC']],
+        limit: 20
+      });
+
+      // Get WA status
+      const waStatus = getWhatsAppStatus();
+
+      res.json({
+        success: true,
+        data: {
+          queueStats,
+          activeCampaigns,
+          pendingLogs,
+          waStatus: {
+            status: waStatus.status,
+            phone: waStatus.phone
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Get process status error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get process status'
+      });
+    }
+  }
+
+  // Clear all pending/queued items
+  async clearQueue(req, res) {
+    try {
+      // Stop all running campaigns
+      const runningCampaigns = await BlastCampaign.findAll({
+        where: { status: ['running', 'queued', 'paused'] }
+      });
+
+      for (const campaign of runningCampaigns) {
+        stopBlastQueue(campaign.id);
+        await campaign.update({ status: 'stopped' });
+      }
+
+      // Delete pending logs
+      const deletedLogs = await BlastLog.destroy({
+        where: { status: 'pending' }
+      });
+
+      res.json({
+        success: true,
+        message: `Cleared ${runningCampaigns.length} campaigns and ${deletedLogs} pending messages`
+      });
+
+    } catch (error) {
+      console.error('Clear queue error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to clear queue'
       });
     }
   }

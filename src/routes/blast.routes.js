@@ -5,6 +5,8 @@ const { authMiddleware } = require('../middleware/auth.middleware');
 
 router.use(authMiddleware);
 
+router.get('/process-status', blastController.getProcessStatus);
+router.post('/clear-queue', blastController.clearQueue);
 router.get('/campaigns', blastController.getCampaigns);
 router.get('/campaigns/:id', blastController.getCampaign);
 router.get('/campaigns/:id/logs', blastController.getCampaignLogs);

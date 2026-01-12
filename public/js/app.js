@@ -124,6 +124,10 @@ function initEventListeners() {
     document.getElementById('groupForm').addEventListener('submit', handleGroupSubmit);
     document.getElementById('templateForm').addEventListener('submit', handleTemplateSubmit);
     document.getElementById('blastForm').addEventListener('submit', handleBlastSubmit);
+
+    // Process status
+    document.getElementById('btnCheckProcess').addEventListener('click', openProcessStatus);
+    document.getElementById('btnClearQueue').addEventListener('click', clearBlastQueue);
 }
 
 // ===== API HELPERS =====
@@ -1443,6 +1447,131 @@ function openModal(id) {
 
 function closeModal(id) {
     document.getElementById(id).classList.remove('active');
+}
+
+// ===== PROCESS STATUS FUNCTIONS =====
+async function openProcessStatus() {
+    openModal('processModal');
+    await loadProcessStatus();
+}
+
+async function loadProcessStatus() {
+    try {
+        const data = await apiCall('/blast/process-status');
+        const { queueStats, activeCampaigns, pendingLogs, waStatus } = data.data;
+
+        // Render WA Status
+        const waStatusEl = document.getElementById('processWaStatus');
+        const statusColors = {
+            'connected': 'text-green-600',
+            'connecting': 'text-yellow-600',
+            'disconnected': 'text-red-600'
+        };
+        waStatusEl.innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full ${waStatus.status === 'connected' ? 'bg-green-500' : waStatus.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'}"></span>
+                <span class="${statusColors[waStatus.status] || 'text-gray-600'} font-medium">${waStatus.status.toUpperCase()}</span>
+                ${waStatus.phone ? `<span class="text-gray-500">(${waStatus.phone})</span>` : ''}
+            </div>
+        `;
+
+        // Render Active Campaigns
+        const campaignsEl = document.getElementById('processActiveCampaigns');
+        if (activeCampaigns.length === 0) {
+            campaignsEl.innerHTML = '<div class="text-gray-500 text-sm p-3 bg-gray-50 rounded-lg">Tidak ada campaign aktif</div>';
+        } else {
+            campaignsEl.innerHTML = activeCampaigns.map(c => {
+                const progress = c.total_contacts > 0 
+                    ? Math.round(((c.sent_count + c.failed_count + c.skipped_count) / c.total_contacts) * 100) 
+                    : 0;
+                const statusBadges = {
+                    'running': 'bg-green-100 text-green-700',
+                    'queued': 'bg-blue-100 text-blue-700',
+                    'paused': 'bg-yellow-100 text-yellow-700'
+                };
+                return `
+                    <div class="p-3 bg-gray-50 rounded-lg flex items-center justify-between">
+                        <div>
+                            <div class="font-medium text-gray-800">${c.name}</div>
+                            <div class="text-sm text-gray-500">${c.template?.name || '-'} • ${c.group?.name || 'Semua'}</div>
+                        </div>
+                        <div class="text-right">
+                            <span class="px-2 py-1 rounded-full text-xs ${statusBadges[c.status]}">${c.status}</span>
+                            <div class="text-sm text-gray-600 mt-1">${progress}% (${c.sent_count}/${c.total_contacts})</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render Pending Logs
+        const logsEl = document.getElementById('processPendingLogs');
+        if (pendingLogs.length === 0) {
+            logsEl.innerHTML = '<div class="text-gray-500 text-sm p-3 bg-gray-50 rounded-lg">Tidak ada pesan pending</div>';
+        } else {
+            logsEl.innerHTML = pendingLogs.map(log => {
+                const scheduledAt = new Date(log.scheduled_at);
+                const now = new Date();
+                const diffMs = scheduledAt - now;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffSecs = Math.floor((diffMs % 60000) / 1000);
+                const timeStr = diffMs > 0 ? `${diffMins}m ${diffSecs}s` : 'Segera';
+                
+                return `
+                    <div class="p-2 bg-gray-50 rounded flex items-center justify-between text-sm">
+                        <div>
+                            <span class="font-medium">${log.contact?.name || '-'}</span>
+                            <span class="text-gray-500 ml-2">${log.contact?.phone || '-'}</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-blue-600">${timeStr}</span>
+                            <div class="text-xs text-gray-400">${log.campaign?.name || '-'}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render Queue Stats
+        const statsEl = document.getElementById('processQueueStats');
+        statsEl.innerHTML = `
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                    <div class="text-2xl font-bold text-blue-600">${queueStats.blast?.waiting || 0}</div>
+                    <div class="text-xs text-gray-500">Blast Queue</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-yellow-600">${queueStats.validation?.waiting || 0}</div>
+                    <div class="text-xs text-gray-500">Validation Queue</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-green-600">${queueStats.activeCampaigns || 0}</div>
+                    <div class="text-xs text-gray-500">Active Campaigns</div>
+                </div>
+            </div>
+        `;
+
+        // Reinitialize icons
+        if (window.lucide) lucide.createIcons();
+
+    } catch (error) {
+        showToast('Gagal memuat status proses', 'error');
+    }
+}
+
+async function clearBlastQueue() {
+    if (!confirm('Apakah Anda yakin ingin menghentikan semua campaign dan menghapus semua pesan pending?')) {
+        return;
+    }
+
+    try {
+        const data = await apiCall('/blast/clear-queue', { method: 'POST' });
+        showToast(data.message, 'success');
+        await loadProcessStatus();
+        loadCampaigns();
+    } catch (error) {
+        showToast('Gagal clear queue', 'error');
+    }
 }
 
 function showToast(message, type = 'info', duration = 3000) {

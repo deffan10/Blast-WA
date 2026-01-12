@@ -439,7 +439,13 @@
                         <!-- Create Blast Form -->
                         <div class="lg:col-span-1">
                             <div class="bg-white rounded-xl shadow-sm p-6">
-                                <h3 class="font-semibold text-gray-800 mb-4">Buat Blast Baru</h3>
+                                <div class="flex items-center justify-between mb-4">
+                                    <h3 class="font-semibold text-gray-800">Buat Blast Baru</h3>
+                                    <button id="btnCheckProcess" class="px-3 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition flex items-center gap-1">
+                                        <i data-lucide="activity" class="w-4 h-4"></i>
+                                        Cek Proses
+                                    </button>
+                                </div>
                                 <form id="blastForm" class="space-y-4">
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700 mb-2">Nama Campaign</label>
@@ -647,6 +653,60 @@
                class="text-blue-600 hover:text-blue-800 font-medium hover:underline">@deffnotjeff</a>
         </p>
     </footer>
+
+    <!-- Process Status Modal -->
+    <div id="processModal" class="modal fixed inset-0 z-50 items-center justify-center bg-black bg-opacity-50">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
+            <div class="p-6 border-b flex items-center justify-between">
+                <h3 class="font-semibold text-lg">Status Proses Blast</h3>
+                <button onclick="closeModal('processModal')" class="text-gray-500 hover:text-gray-700">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1">
+                <!-- WA Status -->
+                <div class="mb-6">
+                    <h4 class="font-medium text-gray-700 mb-2">Status WhatsApp</h4>
+                    <div id="processWaStatus" class="p-3 bg-gray-50 rounded-lg">
+                        <span class="text-gray-500">Loading...</span>
+                    </div>
+                </div>
+
+                <!-- Active Campaigns -->
+                <div class="mb-6">
+                    <h4 class="font-medium text-gray-700 mb-2">Campaign Aktif</h4>
+                    <div id="processActiveCampaigns" class="space-y-2">
+                        <span class="text-gray-500">Loading...</span>
+                    </div>
+                </div>
+
+                <!-- Pending Messages -->
+                <div class="mb-6">
+                    <h4 class="font-medium text-gray-700 mb-2">Pesan Pending</h4>
+                    <div id="processPendingLogs" class="space-y-2 max-h-48 overflow-y-auto">
+                        <span class="text-gray-500">Loading...</span>
+                    </div>
+                </div>
+
+                <!-- Queue Stats -->
+                <div class="mb-4">
+                    <h4 class="font-medium text-gray-700 mb-2">Statistik Antrian</h4>
+                    <div id="processQueueStats" class="p-3 bg-gray-50 rounded-lg">
+                        <span class="text-gray-500">Loading...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="p-4 border-t flex justify-between">
+                <button id="btnClearQueue" class="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition flex items-center gap-2">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    Clear Semua Antrian
+                </button>
+                <button onclick="closeModal('processModal')" class="px-4 py-2 border border-gray-300 rounded-lg font-medium hover:bg-gray-50 transition">
+                    Tutup
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Toast Container -->
     <div id="toastContainer" class="fixed top-4 right-4 z-50 space-y-2"></div>
