@@ -163,10 +163,10 @@ class DashboardController {
         where.status = 'skipped';
       } else if (filter === 'pending_soon') {
         where.status = 'pending';
-        order = [['scheduled_at', 'ASC']];
+        order = [['id', 'ASC']]; // Earliest pending (lowest ID = will be sent soonest)
       } else if (filter === 'pending_later') {
         where.status = 'pending';
-        order = [['scheduled_at', 'DESC']];
+        order = [['id', 'DESC']]; // Latest pending (highest ID = will be sent last)
       }
 
       console.log('Where clause:', where, 'Order:', order);
