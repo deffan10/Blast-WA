@@ -256,7 +256,18 @@
                         <div class="bg-white rounded-xl shadow-sm p-6">
                             <div class="flex items-center justify-between mb-4">
                                 <h3 class="font-semibold text-gray-800">Aktivitas Terbaru</h3>
-                                <span id="activityInfo" class="text-xs text-gray-500"></span>
+                                <div class="flex items-center gap-2">
+                                    <select id="activityFilter" class="text-xs px-2 py-1 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                                        <option value="">Semua</option>
+                                        <option value="pending">⏳ Menunggu</option>
+                                        <option value="sent">✅ Terkirim</option>
+                                        <option value="failed">❌ Gagal</option>
+                                        <option value="skipped">⏭️ Skip</option>
+                                        <option value="pending_soon">🔜 Segera Dikirim</option>
+                                        <option value="pending_later">🕐 Terlama Menunggu</option>
+                                    </select>
+                                    <span id="activityInfo" class="text-xs text-gray-500"></span>
+                                </div>
                             </div>
                             <div id="recentLogs" class="space-y-2">
                                 <p class="text-gray-500 text-sm">Belum ada aktivitas</p>

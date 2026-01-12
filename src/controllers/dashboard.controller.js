@@ -144,13 +144,42 @@ class DashboardController {
     try {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 5;
+      const filter = req.query.filter || '';
       const offset = (page - 1) * limit;
 
-      // Get total count
-      const totalLogs = await BlastLog.count();
+      // Build where clause based on filter
+      let where = {};
+      let order = [['created_at', 'DESC']];
+      
+      switch (filter) {
+        case 'pending':
+          where.status = 'pending';
+          break;
+        case 'sent':
+          where.status = 'sent';
+          break;
+        case 'failed':
+          where.status = 'failed';
+          break;
+        case 'skipped':
+          where.status = 'skipped';
+          break;
+        case 'pending_soon':
+          where.status = 'pending';
+          order = [['scheduled_at', 'ASC']];
+          break;
+        case 'pending_later':
+          where.status = 'pending';
+          order = [['scheduled_at', 'DESC']];
+          break;
+      }
+
+      // Get total count with filter
+      const totalLogs = await BlastLog.count({ where });
       
       // Get paginated logs with campaign info
       const logs = await BlastLog.findAll({
+        where,
         include: [
           { 
             model: BlastCampaign, 
@@ -158,7 +187,7 @@ class DashboardController {
             attributes: ['name', 'interval_minutes', 'status'] 
           }
         ],
-        order: [['created_at', 'DESC']],
+        order,
         limit,
         offset
       });

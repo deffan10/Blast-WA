@@ -128,6 +128,13 @@ function initEventListeners() {
     // Process status
     document.getElementById('btnCheckProcess').addEventListener('click', openProcessStatus);
     document.getElementById('btnClearQueue').addEventListener('click', clearBlastQueue);
+
+    // Activity filter
+    document.getElementById('activityFilter').addEventListener('change', (e) => {
+        activityFilter = e.target.value;
+        activityPage = 1; // Reset to first page
+        loadRecentActivity();
+    });
 }
 
 // ===== API HELPERS =====
@@ -434,9 +441,12 @@ function getRecentCampaignStatusBadge(campaign, progress) {
     return '<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs animate-pulse">Proses</span>';
 }
 
+let activityFilter = '';
+
 async function loadRecentActivity() {
     try {
-        const data = await apiCall(`/dashboard/activity?page=${activityPage}&limit=${ACTIVITY_LIMIT}`);
+        const filterParam = activityFilter ? `&filter=${activityFilter}` : '';
+        const data = await apiCall(`/dashboard/activity?page=${activityPage}&limit=${ACTIVITY_LIMIT}${filterParam}`);
         const { logs, pagination } = data.data;
         
         // Store logs with fetch timestamp for countdown calculation
