@@ -1655,21 +1655,94 @@ function renderPagination(containerId, pagination, callback) {
         return;
     }
     
-    let html = `<span class="text-sm text-gray-500">Halaman ${pagination.page} dari ${pagination.totalPages} (${pagination.total} data)</span>`;
-    html += '<div class="flex gap-2">';
+    const { page, totalPages, total } = pagination;
+    const callbackName = `paginationCallback${containerId}`;
     
-    if (pagination.page > 1) {
-        html += `<button onclick="window.paginationCallback${containerId}(${pagination.page - 1})" class="px-3 py-1 border rounded hover:bg-gray-50">Prev</button>`;
+    let html = `<span class="text-sm text-gray-500">Halaman ${page} dari ${totalPages} (${total} data)</span>`;
+    html += '<div class="flex items-center gap-1">';
+    
+    // Prev button
+    if (page > 1) {
+        html += `<button onclick="window.${callbackName}(${page - 1})" class="px-2 py-1 border rounded hover:bg-gray-50 text-sm">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+        </button>`;
+    } else {
+        html += `<button disabled class="px-2 py-1 border rounded text-gray-300 cursor-not-allowed text-sm">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+        </button>`;
     }
     
-    if (pagination.page < pagination.totalPages) {
-        html += `<button onclick="window.paginationCallback${containerId}(${pagination.page + 1})" class="px-3 py-1 border rounded hover:bg-gray-50">Next</button>`;
+    // Generate page numbers
+    const pageNumbers = generatePageNumbers(page, totalPages);
+    
+    pageNumbers.forEach(p => {
+        if (p === '...') {
+            html += `<span class="px-2 py-1 text-gray-400 text-sm">...</span>`;
+        } else if (p === page) {
+            html += `<button class="px-3 py-1 bg-blue-500 text-white rounded text-sm font-medium">${p}</button>`;
+        } else {
+            html += `<button onclick="window.${callbackName}(${p})" class="px-3 py-1 border rounded hover:bg-gray-50 text-sm">${p}</button>`;
+        }
+    });
+    
+    // Next button
+    if (page < totalPages) {
+        html += `<button onclick="window.${callbackName}(${page + 1})" class="px-2 py-1 border rounded hover:bg-gray-50 text-sm">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+        </button>`;
+    } else {
+        html += `<button disabled class="px-2 py-1 border rounded text-gray-300 cursor-not-allowed text-sm">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+        </button>`;
     }
     
     html += '</div>';
     container.innerHTML = html;
     
-    window[`paginationCallback${containerId}`] = callback;
+    // Re-render icons
+    if (window.lucide) lucide.createIcons();
+    
+    window[callbackName] = callback;
+}
+
+function generatePageNumbers(currentPage, totalPages) {
+    const pages = [];
+    const delta = 2; // Number of pages to show around current page
+    
+    if (totalPages <= 7) {
+        // Show all pages if total is small
+        for (let i = 1; i <= totalPages; i++) {
+            pages.push(i);
+        }
+    } else {
+        // Always show first page
+        pages.push(1);
+        
+        if (currentPage > delta + 2) {
+            pages.push('...');
+        }
+        
+        // Pages around current
+        const start = Math.max(2, currentPage - delta);
+        const end = Math.min(totalPages - 1, currentPage + delta);
+        
+        for (let i = start; i <= end; i++) {
+            if (!pages.includes(i)) {
+                pages.push(i);
+            }
+        }
+        
+        if (currentPage < totalPages - delta - 1) {
+            pages.push('...');
+        }
+        
+        // Always show last page
+        if (!pages.includes(totalPages)) {
+            pages.push(totalPages);
+        }
+    }
+    
+    return pages;
 }
 
 function escapeHtml(text) {
