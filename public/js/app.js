@@ -1267,6 +1267,7 @@ function renderCampaigns(campaigns) {
         const isComplete = progress >= 100;
         const displayStatus = isComplete && c.status === 'running' ? 'completed' : c.status;
         const duration = getCampaignDuration(c);
+        const estimation = getCampaignEstimation(c, progress);
         
         return `
         <div class="p-4 hover:bg-gray-50 transition">
@@ -1297,16 +1298,59 @@ function renderCampaigns(campaigns) {
                     <div class="h-full bg-red-500" style="width: ${(c.failed_count / c.total_contacts) * 100}%"></div>
                     <div class="h-full bg-yellow-500" style="width: ${(c.skipped_count / c.total_contacts) * 100}%"></div>
                 </div>
-                <div class="flex gap-4 text-xs mt-1">
-                    <span class="text-green-600">${c.sent_count} terkirim</span>
-                    <span class="text-red-600">${c.failed_count} gagal</span>
-                    <span class="text-yellow-600">${c.skipped_count} skip</span>
+                <div class="flex justify-between text-xs mt-1">
+                    <div class="flex gap-4">
+                        <span class="text-green-600">${c.sent_count} terkirim</span>
+                        <span class="text-red-600">${c.failed_count} gagal</span>
+                        <span class="text-yellow-600">${c.skipped_count} skip</span>
+                    </div>
+                    ${estimation ? `<span class="text-blue-600"><i data-lucide="timer" class="w-3 h-3 inline"></i> ${estimation}</span>` : ''}
                 </div>
             </div>
         </div>
     `}).join('');
     
     lucide.createIcons();
+}
+
+function getCampaignEstimation(campaign, progress) {
+    // Only show estimation for running/queued campaigns that are not complete
+    if (!['running', 'queued'].includes(campaign.status) || progress >= 100) {
+        return null;
+    }
+    
+    const processed = campaign.sent_count + campaign.failed_count + campaign.skipped_count;
+    const remaining = campaign.total_contacts - processed;
+    
+    if (remaining <= 0) return null;
+    
+    // Calculate estimated time: interval + avg random delay (60s)
+    const avgDelayPerMessage = (campaign.interval_minutes * 60) + 60; // in seconds
+    const totalSecondsRemaining = remaining * avgDelayPerMessage;
+    
+    // Calculate ETA
+    const now = new Date();
+    const eta = new Date(now.getTime() + (totalSecondsRemaining * 1000));
+    
+    // Format remaining time
+    const hours = Math.floor(totalSecondsRemaining / 3600);
+    const minutes = Math.floor((totalSecondsRemaining % 3600) / 60);
+    
+    let timeStr;
+    if (hours > 24) {
+        const days = Math.floor(hours / 24);
+        const remHours = hours % 24;
+        timeStr = `~${days}h ${remHours}j`;
+    } else if (hours > 0) {
+        timeStr = `~${hours}j ${minutes}m`;
+    } else {
+        timeStr = `~${minutes}m`;
+    }
+    
+    // Format ETA time
+    const etaStr = eta.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    
+    return `${timeStr} (selesai ${etaStr})`;
 }
 
 function getCampaignDuration(campaign) {
