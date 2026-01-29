@@ -1,6 +1,6 @@
 /**
- * WhatsApp Service - Baileys v7 Integration
- * FIXED: Proper singleton pattern, no auto-reconnect on conflict
+ * WhatsApp Service - Multi-Session Support (Max 5 accounts)
+ * Supports multiple WhatsApp sessions with random selection for sending
  */
 
 const { 
@@ -19,62 +19,96 @@ const config = require('../config');
 const { WhatsAppSession } = require('../models');
 const { phoneToJid } = require('../utils/phone.util');
 
-// ===== SINGLETON STATE =====
-let sock = null;
-let qrCode = null;
-let connectionStatus = 'disconnected';
-let connectionInfo = null;
+// ===== MULTI-SESSION STATE =====
+const MAX_SESSIONS = 5;
+const sessions = new Map(); // sessionId -> { sock, qrCode, status, info, isConnecting }
 let io = null;
-let isConnecting = false;  // Flag to prevent multiple connect calls
-let saveCreds = null;
 
 // Logger
 const logger = pino({ level: 'silent' });
 
-// Session path
-const SESSION_PATH = path.resolve(config.whatsapp.sessionPath);
+// Base session path
+const BASE_SESSION_PATH = path.resolve(config.whatsapp.sessionPath);
 
 // ===== UTILITY FUNCTIONS =====
-
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-const hasSessionFiles = () => {
-  const credsPath = path.join(SESSION_PATH, 'creds.json');
+const getSessionPath = (sessionId) => {
+  return path.join(BASE_SESSION_PATH, sessionId);
+};
+
+const hasSessionFiles = (sessionId) => {
+  const credsPath = path.join(getSessionPath(sessionId), 'creds.json');
   return fs.existsSync(credsPath);
 };
 
+const getSessionState = (sessionId) => {
+  return sessions.get(sessionId) || {
+    sock: null,
+    qrCode: null,
+    status: 'disconnected',
+    info: null,
+    isConnecting: false
+  };
+};
+
+const setSessionState = (sessionId, state) => {
+  const current = getSessionState(sessionId);
+  sessions.set(sessionId, { ...current, ...state });
+};
+
 /**
- * Cleanup socket safely - ONLY removes listeners and nullifies
+ * Cleanup socket safely
  */
-const cleanupSocket = () => {
-  if (sock) {
-    console.log('📱 Cleaning up socket...');
+const cleanupSocket = (sessionId) => {
+  const session = sessions.get(sessionId);
+  if (session?.sock) {
+    console.log(`📱 [${sessionId}] Cleaning up socket...`);
     try {
-      sock.ev.removeAllListeners();
-      sock.end();
+      session.sock.ev.removeAllListeners();
+      session.sock.end();
     } catch (e) {
       // Ignore
     }
-    sock = null;
+    setSessionState(sessionId, { sock: null });
   }
 };
 
-const emitStatus = () => {
-  if (io) {
+/**
+ * Emit status to frontend
+ */
+const emitStatus = (sessionId = null) => {
+  if (!io) return;
+  
+  if (sessionId) {
+    const state = getSessionState(sessionId);
     io.emit('whatsapp:status', {
-      status: connectionStatus,
-      qr: qrCode,
-      ...connectionInfo
+      sessionId,
+      status: state.status,
+      qr: state.qrCode,
+      phone: state.info?.phone,
+      name: state.info?.name,
+      isConnecting: state.isConnecting
     });
   }
+  
+  // Always emit all sessions status
+  io.emit('whatsapp:all-sessions', getAllSessionsStatus());
 };
 
-const updateSessionStatus = async (status, info = null) => {
+/**
+ * Update session status in database
+ */
+const updateSessionStatus = async (sessionId, status, info = null) => {
   try {
-    let session = await WhatsAppSession.findOne({ where: { session_id: 'default' } });
+    let session = await WhatsAppSession.findOne({ where: { session_id: sessionId } });
     if (!session) {
-      session = await WhatsAppSession.create({ session_id: 'default' });
+      session = await WhatsAppSession.create({ 
+        session_id: sessionId,
+        label: `WhatsApp ${sessionId.replace('wa_', '')}`
+      });
     }
+    
     const updateData = { status };
     if (status === 'connected' && info) {
       updateData.phone_number = info.phone;
@@ -83,83 +117,78 @@ const updateSessionStatus = async (status, info = null) => {
     }
     await session.update(updateData);
   } catch (error) {
-    console.error('Failed to update session status:', error.message);
+    console.error(`[${sessionId}] Failed to update session status:`, error.message);
   }
 };
 
 /**
- * Clear session files - ONLY called on explicit logout or when user requests
+ * Clear session files
  */
-const clearSession = () => {
+const clearSession = (sessionId) => {
   try {
-    console.log('📱 Clearing session files...');
-    if (fs.existsSync(SESSION_PATH)) {
-      fs.rmSync(SESSION_PATH, { recursive: true, force: true });
+    const sessionPath = getSessionPath(sessionId);
+    console.log(`📱 [${sessionId}] Clearing session files...`);
+    if (fs.existsSync(sessionPath)) {
+      fs.rmSync(sessionPath, { recursive: true, force: true });
     }
-    fs.mkdirSync(SESSION_PATH, { recursive: true });
   } catch (error) {
-    console.error('Failed to clear session:', error.message);
+    console.error(`[${sessionId}] Failed to clear session:`, error.message);
   }
 };
 
 // ===== MAIN FUNCTIONS =====
 
 /**
- * Initialize WhatsApp connection - SINGLETON
- * Will return existing socket if already connected/connecting
+ * Initialize a WhatsApp session
  */
-const initWhatsApp = async (socketIo, forceNew = false) => {
+const initSession = async (sessionId, socketIo, forceNew = false) => {
   io = socketIo;
-
-  // ===== SINGLETON CHECK =====
-  // If already connected, just return
-  if (sock && connectionStatus === 'connected') {
-    console.log('📱 Already connected, returning existing socket');
-    emitStatus();
-    return sock;
+  
+  const state = getSessionState(sessionId);
+  
+  // If already connected, return existing socket
+  if (state.sock && state.status === 'connected') {
+    console.log(`📱 [${sessionId}] Already connected`);
+    emitStatus(sessionId);
+    return state.sock;
   }
-
-  // If currently connecting, don't create new socket
-  if (isConnecting) {
-    console.log('📱 Already connecting, please wait...');
-    emitStatus();
+  
+  // If currently connecting, wait
+  if (state.isConnecting) {
+    console.log(`📱 [${sessionId}] Already connecting, please wait...`);
+    emitStatus(sessionId);
     return null;
   }
-
+  
   // If forceNew, cleanup first
   if (forceNew) {
-    cleanupSocket();
+    cleanupSocket(sessionId);
   }
-
-  // If socket exists but not connected, check if we should reuse
-  if (sock && !forceNew) {
-    console.log('📱 Socket exists, checking status...');
-    emitStatus();
-    return sock;
-  }
-
-  // ===== START CONNECTING =====
-  isConnecting = true;
-  console.log('📱 Starting WhatsApp connection...');
-
+  
+  // Start connecting
+  setSessionState(sessionId, { isConnecting: true, status: 'connecting' });
+  console.log(`📱 [${sessionId}] Starting connection...`);
+  emitStatus(sessionId);
+  
   try {
+    const sessionPath = getSessionPath(sessionId);
+    
     // Ensure session directory exists
-    if (!fs.existsSync(SESSION_PATH)) {
-      fs.mkdirSync(SESSION_PATH, { recursive: true });
+    if (!fs.existsSync(sessionPath)) {
+      fs.mkdirSync(sessionPath, { recursive: true });
     }
-
+    
     // Get WA version
     const { version } = await fetchLatestBaileysVersion();
-    console.log(`📱 Using WA version: ${version.join('.')}`);
-
-    // Load auth state
-    const authState = await useMultiFileAuthState(SESSION_PATH);
-    saveCreds = authState.saveCreds;
+    console.log(`📱 [${sessionId}] Using WA version: ${version.join('.')}`);
     
-    console.log('📱 Auth state loaded, has existing session:', !!authState.state.creds?.me);
-
+    // Load auth state
+    const authState = await useMultiFileAuthState(sessionPath);
+    
+    console.log(`📱 [${sessionId}] Has existing session:`, !!authState.state.creds?.me);
+    
     // Create socket
-    sock = makeWASocket({
+    const sock = makeWASocket({
       version,
       logger,
       printQRInTerminal: true,
@@ -177,219 +206,286 @@ const initWhatsApp = async (socketIo, forceNew = false) => {
       qrTimeout: 40000,
       getMessage: async () => ({ conversation: '' })
     });
-
-    // ===== CREDENTIAL UPDATE HANDLER =====
+    
+    setSessionState(sessionId, { sock });
+    
+    // Credential update handler
     sock.ev.on('creds.update', async () => {
       try {
-        await saveCreds();
-        console.log('📱 Credentials saved');
+        await authState.saveCreds();
+        console.log(`📱 [${sessionId}] Credentials saved`);
       } catch (err) {
-        console.error('📱 Failed to save credentials:', err.message);
+        console.error(`📱 [${sessionId}] Failed to save credentials:`, err.message);
       }
     });
-
-    // ===== CONNECTION UPDATE HANDLER =====
+    
+    // Connection update handler
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-
-      // ----- QR CODE -----
+      
+      // QR Code
       if (qr) {
-        console.log('📱 QR Code generated');
-        connectionStatus = 'qr_ready';
+        console.log(`📱 [${sessionId}] QR Code generated`);
         try {
-          qrCode = await qrcode.toDataURL(qr, { width: 300, margin: 2 });
+          const qrDataUrl = await qrcode.toDataURL(qr, { width: 300, margin: 2 });
+          setSessionState(sessionId, { qrCode: qrDataUrl, status: 'qr_ready' });
         } catch (e) {
-          console.error('QR conversion error:', e.message);
+          console.error(`[${sessionId}] QR conversion error:`, e.message);
         }
-        emitStatus();
-        await updateSessionStatus('qr_ready');
+        emitStatus(sessionId);
+        await updateSessionStatus(sessionId, 'qr_ready');
       }
-
-      // ----- CONNECTING -----
+      
+      // Connecting
       if (connection === 'connecting') {
-        console.log('📱 Connecting...');
-        connectionStatus = 'connecting';
-        emitStatus();
-        await updateSessionStatus('connecting');
+        console.log(`📱 [${sessionId}] Connecting...`);
+        setSessionState(sessionId, { status: 'connecting' });
+        emitStatus(sessionId);
+        await updateSessionStatus(sessionId, 'connecting');
       }
-
-      // ----- CONNECTED -----
+      
+      // Connected
       if (connection === 'open') {
-        console.log('📱 Connection opened!');
-        isConnecting = false;
+        console.log(`📱 [${sessionId}] Connection opened!`);
+        setSessionState(sessionId, { isConnecting: false });
         
         const user = sock?.user;
+        let info = null;
         if (user?.id) {
-          connectionInfo = {
+          info = {
             phone: user.id.split(':')[0] || user.id.split('@')[0],
             name: user.name || 'Unknown'
           };
-          console.log(`📱 ✅ Connected as: ${connectionInfo.name} (+${connectionInfo.phone})`);
+          console.log(`📱 [${sessionId}] ✅ Connected as: ${info.name} (+${info.phone})`);
         }
         
-        connectionStatus = 'connected';
-        qrCode = null;
-        emitStatus();
-        await updateSessionStatus('connected', connectionInfo);
+        setSessionState(sessionId, { 
+          status: 'connected', 
+          qrCode: null, 
+          info 
+        });
+        emitStatus(sessionId);
+        await updateSessionStatus(sessionId, 'connected', info);
       }
-
-      // ----- DISCONNECTED -----
+      
+      // Disconnected
       if (connection === 'close') {
         const reason = DisconnectReason[statusCode] || statusCode;
         const errorMsg = lastDisconnect?.error?.message || '';
         
-        console.log(`📱 Disconnected - reason: ${reason} (${statusCode})`);
-        if (errorMsg) console.log(`📱 Error: ${errorMsg}`);
-
-        isConnecting = false;
-        connectionStatus = 'disconnected';
-        qrCode = null;
+        console.log(`📱 [${sessionId}] Disconnected - reason: ${reason} (${statusCode})`);
         
-        emitStatus();
-
-        // ===== CHECK FOR CONFLICT FIRST (before switch) =====
-        // This is important because 401 = DisconnectReason.loggedOut
-        // but we need to handle conflict differently
+        setSessionState(sessionId, { 
+          isConnecting: false, 
+          status: 'disconnected', 
+          qrCode: null 
+        });
+        emitStatus(sessionId);
+        
+        // Check for conflict
         const isConflict = errorMsg.toLowerCase().includes('conflict') || 
                           errorMsg.toLowerCase().includes('replaced') ||
                           statusCode === 440;
         
         if (isConflict) {
-          console.log('📱 ⚠️ CONFLICT/REPLACED detected!');
-          console.log('📱 Error message:', errorMsg);
-          console.log('📱 ====================================');
-          console.log('📱 JANGAN CLEAR SESSION - ini bukan logout!');
-          console.log('📱 Kemungkinan penyebab:');
-          console.log('📱 1. Ada WhatsApp Web lain yang aktif');
-          console.log('📱 2. Baileys membuat socket duplikat');
-          console.log('📱 ====================================');
-          
-          // DO NOT clear session
-          sock = null;
-          await updateSessionStatus('disconnected');
+          console.log(`📱 [${sessionId}] ⚠️ CONFLICT detected!`);
+          setSessionState(sessionId, { sock: null });
+          await updateSessionStatus(sessionId, 'disconnected');
           
           if (io) {
             io.emit('wa-error', {
+              sessionId,
               type: 'conflict',
-              message: 'Conflict detected! Pastikan tidak ada WhatsApp Web lain yang aktif. Tunggu 2 menit, lalu coba lagi.'
+              message: `[${sessionId}] Conflict detected! Pastikan tidak ada WhatsApp Web lain yang aktif.`
             });
           }
-          return; // EXIT - don't process switch
+          return;
         }
-
-        // Handle other disconnect reasons
+        
+        // Handle disconnect reasons
         switch (statusCode) {
           case DisconnectReason.loggedOut:
           case 401:
-            // Real logout (no conflict) - clear session
-            console.log('📱 User logged out - clearing session');
-            clearSession();
-            connectionInfo = null;
-            sock = null;
-            await updateSessionStatus('disconnected');
+            console.log(`📱 [${sessionId}] User logged out - clearing session`);
+            clearSession(sessionId);
+            setSessionState(sessionId, { info: null, sock: null });
+            await updateSessionStatus(sessionId, 'disconnected');
             break;
-
+            
           case DisconnectReason.restartRequired:
           case 515:
-            // Restart required after QR scan - NORMAL
-            console.log('📱 Restart required (normal after QR scan)');
-            cleanupSocket();
-            
-            // Wait for creds to save
+            console.log(`📱 [${sessionId}] Restart required (normal after QR scan)`);
+            cleanupSocket(sessionId);
             await delay(2000);
             
-            // Auto reconnect with saved session
-            if (hasSessionFiles()) {
-              console.log('📱 Reconnecting with saved session...');
-              isConnecting = false; // Reset flag
-              await initWhatsApp(io, true);
+            if (hasSessionFiles(sessionId)) {
+              console.log(`📱 [${sessionId}] Reconnecting with saved session...`);
+              setSessionState(sessionId, { isConnecting: false });
+              await initSession(sessionId, io, true);
             }
             break;
-
+            
           default:
-            // Other errors - just cleanup, don't auto-reconnect
-            console.log('📱 Connection lost. Click "Scan QR" to reconnect.');
-            sock = null;
-            await updateSessionStatus('disconnected');
+            console.log(`📱 [${sessionId}] Connection lost.`);
+            setSessionState(sessionId, { sock: null });
+            await updateSessionStatus(sessionId, 'disconnected');
         }
       }
     });
-
+    
     // Ignore history sync
     sock.ev.on('messaging-history.set', () => {
-      console.log('📱 History sync received (ignored)');
+      console.log(`📱 [${sessionId}] History sync received (ignored)`);
     });
-
+    
     return sock;
-
+    
   } catch (error) {
-    console.error('❌ WhatsApp init error:', error);
-    isConnecting = false;
-    connectionStatus = 'disconnected';
-    cleanupSocket();
-    emitStatus();
+    console.error(`❌ [${sessionId}] Init error:`, error);
+    setSessionState(sessionId, { 
+      isConnecting: false, 
+      status: 'disconnected' 
+    });
+    cleanupSocket(sessionId);
+    emitStatus(sessionId);
     throw error;
   }
 };
 
 /**
- * Get current status - READ ONLY, does not create socket
+ * Get all sessions status
  */
-const getWhatsAppStatus = () => ({
-  status: connectionStatus,
-  qr: qrCode,
-  phone: connectionInfo?.phone,
-  name: connectionInfo?.name,
-  isConnecting
-});
+const getAllSessionsStatus = () => {
+  const result = [];
+  
+  for (let i = 1; i <= MAX_SESSIONS; i++) {
+    const sessionId = `wa_${i}`;
+    const state = getSessionState(sessionId);
+    result.push({
+      sessionId,
+      status: state.status,
+      qr: state.qrCode,
+      phone: state.info?.phone,
+      name: state.info?.name,
+      isConnecting: state.isConnecting
+    });
+  }
+  
+  return result;
+};
 
 /**
- * Disconnect and clear session - explicit user action
+ * Get status of a specific session
  */
-const disconnectWhatsApp = async () => {
-  console.log('📱 Disconnecting...');
-  isConnecting = false;
-  
-  if (sock) {
-    try {
-      await sock.logout();
-    } catch (e) {
-      console.log('📱 Logout warning:', e.message);
+const getSessionStatus = (sessionId) => {
+  const state = getSessionState(sessionId);
+  return {
+    sessionId,
+    status: state.status,
+    qr: state.qrCode,
+    phone: state.info?.phone,
+    name: state.info?.name,
+    isConnecting: state.isConnecting
+  };
+};
+
+/**
+ * Get any connected session status (for backward compatibility)
+ */
+const getWhatsAppStatus = () => {
+  // Find any connected session
+  for (const [sessionId, state] of sessions) {
+    if (state.status === 'connected') {
+      return {
+        status: 'connected',
+        qr: null,
+        phone: state.info?.phone,
+        name: state.info?.name,
+        sessionId
+      };
     }
   }
   
-  connectionStatus = 'disconnected';
-  qrCode = null;
-  connectionInfo = null;
-  clearSession();
-  cleanupSocket();
-  await updateSessionStatus('disconnected');
-  emitStatus();
+  // No connected session
+  return {
+    status: 'disconnected',
+    qr: null,
+    phone: null,
+    name: null,
+    sessionId: null
+  };
 };
 
 /**
- * Refresh/reconnect - user triggered
+ * Get random connected session for sending
  */
-const refreshSession = async (socketIo) => {
-  console.log('📱 Refreshing session...');
-  isConnecting = false;
-  cleanupSocket();
-  // Don't clear session - try to reconnect with existing
-  await initWhatsApp(socketIo, true);
+const getRandomConnectedSession = () => {
+  const connected = [];
+  
+  for (const [sessionId, state] of sessions) {
+    if (state.status === 'connected' && state.sock) {
+      connected.push({ sessionId, ...state });
+    }
+  }
+  
+  if (connected.length === 0) return null;
+  
+  const randomIndex = Math.floor(Math.random() * connected.length);
+  return connected[randomIndex];
 };
 
 /**
- * Check if phone is registered on WhatsApp
+ * Disconnect a session
+ */
+const disconnectSession = async (sessionId) => {
+  console.log(`📱 [${sessionId}] Disconnecting...`);
+  
+  const state = getSessionState(sessionId);
+  setSessionState(sessionId, { isConnecting: false });
+  
+  if (state.sock) {
+    try {
+      await state.sock.logout();
+    } catch (e) {
+      console.log(`📱 [${sessionId}] Logout warning:`, e.message);
+    }
+  }
+  
+  setSessionState(sessionId, { 
+    status: 'disconnected', 
+    qrCode: null, 
+    info: null 
+  });
+  clearSession(sessionId);
+  cleanupSocket(sessionId);
+  await updateSessionStatus(sessionId, 'disconnected');
+  emitStatus(sessionId);
+};
+
+/**
+ * Refresh/reconnect a session
+ */
+const refreshSession = async (sessionId, socketIo) => {
+  console.log(`📱 [${sessionId}] Refreshing session...`);
+  setSessionState(sessionId, { isConnecting: false });
+  cleanupSocket(sessionId);
+  await initSession(sessionId, socketIo, true);
+};
+
+/**
+ * Check if phone is registered on WhatsApp (using random connected session)
  */
 const checkWhatsAppRegistration = async (phone) => {
-  if (!sock || connectionStatus !== 'connected') {
-    throw new Error(`WhatsApp not connected (status: ${connectionStatus})`);
+  const session = getRandomConnectedSession();
+  
+  if (!session) {
+    throw new Error('No WhatsApp session connected');
   }
-
+  
   try {
     const jid = phoneToJid(phone);
-    const [result] = await sock.onWhatsApp(jid);
+    const [result] = await session.sock.onWhatsApp(jid);
     return {
       registered: result?.exists || false,
       jid: result?.jid || null
@@ -401,18 +497,22 @@ const checkWhatsAppRegistration = async (phone) => {
 };
 
 /**
- * Send text message
+ * Send text message using random connected session
  */
 const sendMessage = async (jid, message) => {
-  if (!sock || connectionStatus !== 'connected') {
-    throw new Error('WhatsApp is not connected');
+  const session = getRandomConnectedSession();
+  
+  if (!session) {
+    throw new Error('No WhatsApp session connected');
   }
-
+  
   try {
-    const result = await sock.sendMessage(jid, { text: message });
+    console.log(`📤 [${session.sessionId}] Sending to ${jid}`);
+    const result = await session.sock.sendMessage(jid, { text: message });
     return {
       success: true,
-      messageId: result?.key?.id
+      messageId: result?.key?.id,
+      sessionId: session.sessionId
     };
   } catch (error) {
     console.error(`Send error to ${jid}:`, error.message);
@@ -420,11 +520,42 @@ const sendMessage = async (jid, message) => {
   }
 };
 
-const getSocket = () => sock;
-
-const incrementMessageCounter = async () => {
+/**
+ * Send message using specific session
+ */
+const sendMessageWithSession = async (sessionId, jid, message) => {
+  const state = getSessionState(sessionId);
+  
+  if (state.status !== 'connected' || !state.sock) {
+    throw new Error(`Session ${sessionId} is not connected`);
+  }
+  
   try {
-    let session = await WhatsAppSession.findOne({ where: { session_id: 'default' } });
+    console.log(`📤 [${sessionId}] Sending to ${jid}`);
+    const result = await state.sock.sendMessage(jid, { text: message });
+    return {
+      success: true,
+      messageId: result?.key?.id,
+      sessionId
+    };
+  } catch (error) {
+    console.error(`[${sessionId}] Send error to ${jid}:`, error.message);
+    throw error;
+  }
+};
+
+/**
+ * Increment message counter for a session
+ */
+const incrementMessageCounter = async (sessionId = null) => {
+  try {
+    // If no sessionId provided, use first connected session
+    if (!sessionId) {
+      const session = getRandomConnectedSession();
+      sessionId = session?.sessionId || 'wa_1';
+    }
+    
+    let session = await WhatsAppSession.findOne({ where: { session_id: sessionId } });
     if (session) {
       session.checkAndResetDailyCounter();
       session.messages_sent_today++;
@@ -438,29 +569,133 @@ const incrementMessageCounter = async () => {
   }
 };
 
+/**
+ * Get total daily message count across all sessions
+ */
 const getDailyMessageCount = async () => {
   try {
-    let session = await WhatsAppSession.findOne({ where: { session_id: 'default' } });
-    if (session) {
+    const allSessions = await WhatsAppSession.findAll();
+    let total = 0;
+    
+    for (const session of allSessions) {
       session.checkAndResetDailyCounter();
       await session.save();
-      return session.messages_sent_today;
+      total += session.messages_sent_today;
     }
-    return 0;
+    
+    return total;
   } catch (error) {
     console.error('Failed to get counter:', error);
     return 0;
   }
 };
 
+/**
+ * Initialize all sessions from database on server start
+ */
+const initAllSessions = async (socketIo) => {
+  io = socketIo;
+  
+  console.log('📱 Initializing all WhatsApp sessions...');
+  
+  try {
+    // Get all sessions from database
+    const dbSessions = await WhatsAppSession.findAll({
+      where: { is_active: true }
+    });
+    
+    for (const dbSession of dbSessions) {
+      const sessionId = dbSession.session_id;
+      
+      // Check if session files exist
+      if (hasSessionFiles(sessionId)) {
+        console.log(`📱 [${sessionId}] Found existing session, reconnecting...`);
+        try {
+          await initSession(sessionId, socketIo, false);
+        } catch (e) {
+          console.error(`📱 [${sessionId}] Failed to reconnect:`, e.message);
+        }
+      }
+    }
+    
+    console.log('📱 All sessions initialization complete');
+  } catch (error) {
+    console.error('Failed to init all sessions:', error);
+  }
+};
+
+/**
+ * Get connected sessions count
+ */
+const getConnectedSessionsCount = () => {
+  let count = 0;
+  for (const [, state] of sessions) {
+    if (state.status === 'connected') count++;
+  }
+  return count;
+};
+
+// ===== BACKWARD COMPATIBILITY =====
+// These functions maintain compatibility with existing code
+
+/**
+ * @deprecated Use initSession instead
+ */
+const initWhatsApp = async (socketIo, forceNew = false) => {
+  // For backward compatibility, use wa_1 as default
+  return await initSession('wa_1', socketIo, forceNew);
+};
+
+/**
+ * @deprecated Use disconnectSession instead
+ */
+const disconnectWhatsApp = async () => {
+  // Disconnect all sessions
+  for (let i = 1; i <= MAX_SESSIONS; i++) {
+    const sessionId = `wa_${i}`;
+    const state = getSessionState(sessionId);
+    if (state.status !== 'disconnected') {
+      await disconnectSession(sessionId);
+    }
+  }
+};
+
+/**
+ * @deprecated Use getSessionStatus instead
+ */
+const getSocket = () => {
+  const session = getRandomConnectedSession();
+  return session?.sock || null;
+};
+
 module.exports = {
-  initWhatsApp,
-  getWhatsAppStatus,
-  disconnectWhatsApp,
+  // Session management
+  initSession,
+  disconnectSession,
   refreshSession,
+  initAllSessions,
+  
+  // Status
+  getSessionStatus,
+  getAllSessionsStatus,
+  getWhatsAppStatus,
+  getRandomConnectedSession,
+  getConnectedSessionsCount,
+  
+  // Messaging
   checkWhatsAppRegistration,
   sendMessage,
-  getSocket,
+  sendMessageWithSession,
+  
+  // Counters
   incrementMessageCounter,
-  getDailyMessageCount
+  getDailyMessageCount,
+  
+  // Constants
+  MAX_SESSIONS,
+  
+  // Backward compatibility
+  initWhatsApp,
+  disconnectWhatsApp,
+  getSocket
 };

@@ -57,6 +57,11 @@ const BlastLog = sequelize.define('BlastLog', {
     type: DataTypes.STRING(100),
     allowNull: true,
     comment: 'WhatsApp message ID for tracking'
+  },
+  sent_via: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    comment: 'WhatsApp session ID that sent this message (wa_1, wa_2, etc.)'
   }
 }, {
   tableName: 'blast_logs',

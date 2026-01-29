@@ -8,7 +8,7 @@ const path = require('path');
 const config = require('./config');
 const { sequelize, testConnection } = require('./config/database');
 const routes = require('./routes');
-const { initWhatsApp } = require('./services/whatsapp.service');
+const { initWhatsApp, initAllSessions } = require('./services/whatsapp.service');
 const { initQueues } = require('./services/queue.service');
 
 const app = express();
@@ -78,17 +78,34 @@ const startServer = async () => {
     await seedAdmin();
 
     // Don't auto-init WhatsApp - let user click Scan QR
-    // Check if there's existing session credentials
+    // Check for existing session files and migrate if needed
     const fs = require('fs');
     const sessionPath = path.resolve(config.whatsapp.sessionPath);
-    const hasExistingSession = fs.existsSync(path.join(sessionPath, 'creds.json'));
+    const oldCredsPath = path.join(sessionPath, 'creds.json');
+    const newSessionPath = path.join(sessionPath, 'wa_1');
     
-    if (hasExistingSession) {
-      console.log('📱 Found existing WhatsApp session, attempting to restore...');
-      await initWhatsApp(io, false);
-    } else {
-      console.log('📱 No WhatsApp session found. Click "Scan QR" in dashboard to connect.');
+    // Migrate old session to wa_1 if exists
+    if (fs.existsSync(oldCredsPath) && !fs.existsSync(path.join(newSessionPath, 'creds.json'))) {
+      console.log('📱 Migrating old session to wa_1...');
+      if (!fs.existsSync(newSessionPath)) {
+        fs.mkdirSync(newSessionPath, { recursive: true });
+      }
+      // Move all session files to wa_1 folder
+      const files = fs.readdirSync(sessionPath);
+      for (const file of files) {
+        if (file !== 'wa_1' && file !== 'wa_2' && file !== 'wa_3' && file !== 'wa_4' && file !== 'wa_5') {
+          const srcPath = path.join(sessionPath, file);
+          const destPath = path.join(newSessionPath, file);
+          if (fs.statSync(srcPath).isFile()) {
+            fs.renameSync(srcPath, destPath);
+          }
+        }
+      }
+      console.log('📱 Session migrated to wa_1 successfully');
     }
+    
+    // Initialize all active sessions
+    await initAllSessions(io);
 
     // Initialize Queue system
     initQueues(io);

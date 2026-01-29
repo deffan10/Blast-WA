@@ -4,6 +4,8 @@ const {
   checkWhatsAppRegistration, 
   sendMessage, 
   getWhatsAppStatus,
+  getRandomConnectedSession,
+  getConnectedSessionsCount,
   incrementMessageCounter,
   getDailyMessageCount
 } = require('./whatsapp.service');
@@ -208,11 +210,11 @@ const processBlast = async (campaignId) => {
       if (!updatedState || updatedState.stopped) break;
     }
 
-    // Check WhatsApp connection
-    const waStatus = getWhatsAppStatus();
-    if (waStatus.status !== 'connected') {
-      console.log('WhatsApp disconnected, pausing campaign...');
-      await campaign.update({ status: 'paused', error_message: 'WhatsApp disconnected' });
+    // Check WhatsApp connection - now checks for ANY connected session
+    const connectedCount = getConnectedSessionsCount();
+    if (connectedCount === 0) {
+      console.log('No WhatsApp sessions connected, pausing campaign...');
+      await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
       emitCampaignUpdate(campaign);
       break;
     }
@@ -259,15 +261,16 @@ const processBlast = async (campaignId) => {
       // Get JID
       const jid = contact.wa_jid || phoneToJid(contact.phone_normalized);
 
-      // Send message
+      // Send message (uses random connected session)
       const result = await sendMessage(jid, message);
 
-      // Update log
+      // Update log with session info
       await log.update({
         status: 'sent',
         message_content: message,
         wa_message_id: result.messageId,
-        sent_at: new Date()
+        sent_at: new Date(),
+        sent_via: result.sessionId || 'unknown' // Track which session sent this
       });
 
       // Update campaign counters
@@ -279,8 +282,8 @@ const processBlast = async (campaignId) => {
         await campaign.template.increment('usage_count');
       }
 
-      // Increment daily counter
-      await incrementMessageCounter();
+      // Increment daily counter for the session that sent it
+      await incrementMessageCounter(result.sessionId);
 
       // Reset error counter
       consecutiveErrors = 0;
@@ -289,7 +292,7 @@ const processBlast = async (campaignId) => {
       emitLogUpdate(log);
       emitCampaignUpdate(campaign);
 
-      console.log(`✅ Message sent to ${contact.phone_normalized}`);
+      console.log(`✅ [${result.sessionId}] Message sent to ${contact.phone_normalized}`);
 
     } catch (error) {
       console.error(`❌ Failed to send to ${contact.phone_normalized}:`, error.message);

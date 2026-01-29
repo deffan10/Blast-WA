@@ -11,7 +11,12 @@ const WhatsAppSession = sequelize.define('WhatsAppSession', {
     type: DataTypes.STRING(50),
     allowNull: false,
     unique: true,
-    defaultValue: 'default'
+    comment: 'Unique session identifier (wa_1, wa_2, etc.)'
+  },
+  label: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    comment: 'User-friendly label for the session'
   },
   status: {
     type: DataTypes.ENUM('disconnected', 'connecting', 'qr_ready', 'connected'),
@@ -37,6 +42,11 @@ const WhatsAppSession = sequelize.define('WhatsAppSession', {
   last_message_date: {
     type: DataTypes.DATEONLY,
     allowNull: true
+  },
+  is_active: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true,
+    comment: 'Whether this session should be used for sending'
   }
 }, {
   tableName: 'whatsapp_sessions'
@@ -49,6 +59,32 @@ WhatsAppSession.prototype.checkAndResetDailyCounter = function() {
     this.messages_sent_today = 0;
     this.last_message_date = today;
   }
+};
+
+// Static method to get random connected session
+WhatsAppSession.getRandomConnected = async function() {
+  const sessions = await this.findAll({
+    where: {
+      status: 'connected',
+      is_active: true
+    }
+  });
+  
+  if (sessions.length === 0) return null;
+  
+  // Random selection
+  const randomIndex = Math.floor(Math.random() * sessions.length);
+  return sessions[randomIndex];
+};
+
+// Static method to get all connected sessions
+WhatsAppSession.getConnectedSessions = async function() {
+  return await this.findAll({
+    where: {
+      status: 'connected',
+      is_active: true
+    }
+  });
 };
 
 module.exports = WhatsAppSession;

@@ -395,6 +395,54 @@ class BlastController {
     }
   }
 
+  // Update interval
+  async updateInterval(req, res) {
+    try {
+      const { id } = req.params;
+      const { interval_minutes } = req.body;
+
+      if (!interval_minutes || interval_minutes < 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid interval value'
+        });
+      }
+
+      const campaign = await BlastCampaign.findByPk(id);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+
+      if (!['running', 'queued', 'paused'].includes(campaign.status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Only running, queued, or paused campaigns can be edited'
+        });
+      }
+
+      await campaign.update({ interval_minutes });
+
+      console.log(`Campaign ${id} interval updated to ${interval_minutes} minutes`);
+
+      res.json({
+        success: true,
+        message: `Interval updated to ${interval_minutes} minutes`,
+        data: campaign
+      });
+
+    } catch (error) {
+      console.error('Update interval error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update interval'
+      });
+    }
+  }
+
   // Delete campaign
   async deleteCampaign(req, res) {
     try {

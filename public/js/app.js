@@ -47,17 +47,21 @@ function initSocket() {
     });
     
     socket.on('whatsapp:status', (data) => {
-        updateWhatsAppStatus(data);
+        // Single session update - reload all sessions
+        loadWhatsAppSessions();
+    });
+    
+    socket.on('whatsapp:all-sessions', (data) => {
+        // All sessions update
+        if (currentPage === 'whatsapp') {
+            renderWhatsAppSessions({ sessions: data, connectedCount: data.filter(s => s.status === 'connected').length, maxSessions: 5 });
+        }
+        updateHeaderWaStatus({ connectedCount: data.filter(s => s.status === 'connected').length });
     });
     
     socket.on('wa-error', (data) => {
         // Handle WhatsApp specific errors like conflict
         showToast(data.message, 'error', 10000);
-        if (data.type === 'conflict') {
-            // Show special UI for conflict
-            document.getElementById('waStatusBadge').className = 'px-3 py-1 rounded-full text-sm font-semibold bg-red-100 text-red-800';
-            document.getElementById('waStatusBadge').textContent = 'Conflict - Tunggu 30 detik';
-        }
     });
     
     socket.on('contact:validated', (data) => {
@@ -125,6 +129,7 @@ function initEventListeners() {
     document.getElementById('groupForm').addEventListener('submit', handleGroupSubmit);
     document.getElementById('templateForm').addEventListener('submit', handleTemplateSubmit);
     document.getElementById('blastForm').addEventListener('submit', handleBlastSubmit);
+    document.getElementById('editIntervalForm').addEventListener('submit', handleEditIntervalSubmit);
 
     // Process status
     document.getElementById('btnCheckProcess').addEventListener('click', openProcessStatus);
@@ -767,42 +772,226 @@ function updateWhatsAppStatus(data) {
     lucide.createIcons();
 }
 
-async function loadWhatsAppStatus() {
+// ===== WHATSAPP MULTI-SESSION =====
+async function loadWhatsAppSessions() {
     try {
-        const data = await apiCall('/whatsapp/status');
-        updateWhatsAppStatus(data.data);
+        const data = await apiCall('/whatsapp/sessions');
+        renderWhatsAppSessions(data.data);
+        updateHeaderWaStatus(data.data);
     } catch (error) {
-        console.error('Failed to load WA status:', error);
+        console.error('Failed to load WA sessions:', error);
     }
 }
 
-async function handleScanQR() {
+function renderWhatsAppSessions(data) {
+    const grid = document.getElementById('waSessionsGrid');
+    const connectedCountEl = document.getElementById('connectedCount');
+    const maxSessionsEl = document.getElementById('maxSessions');
+    
+    if (connectedCountEl) connectedCountEl.textContent = data.connectedCount;
+    if (maxSessionsEl) maxSessionsEl.textContent = data.maxSessions;
+    
+    if (!grid) return;
+    
+    grid.innerHTML = data.sessions.map(session => `
+        <div class="bg-white rounded-xl shadow-sm p-6 border-2 ${session.status === 'connected' ? 'border-green-300' : 'border-gray-200'}">
+            <!-- Header -->
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <span class="status-dot ${getSessionStatusClass(session.status)}"></span>
+                    <span class="font-semibold text-gray-800">${session.label || session.sessionId}</span>
+                </div>
+                <span class="text-xs px-2 py-1 rounded-full ${getSessionStatusBadge(session.status)}">
+                    ${getSessionStatusText(session.status)}
+                </span>
+            </div>
+            
+            <!-- Content based on status -->
+            ${renderSessionContent(session)}
+            
+            <!-- Actions -->
+            <div class="flex gap-2 mt-4">
+                ${renderSessionActions(session)}
+            </div>
+        </div>
+    `).join('');
+    
+    lucide.createIcons();
+}
+
+function renderSessionContent(session) {
+    if (session.status === 'connected') {
+        return `
+            <div class="bg-green-50 rounded-lg p-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 bg-green-500 rounded-full flex items-center justify-center">
+                        <i data-lucide="check" class="w-6 h-6 text-white"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium text-gray-800">${session.name || 'Unknown'}</p>
+                        <p class="text-sm text-gray-600">+${session.phone || '-'}</p>
+                    </div>
+                </div>
+                <div class="mt-3 text-sm text-gray-600">
+                    <span class="font-medium">${session.messages_sent_today || 0}</span> pesan hari ini
+                </div>
+            </div>
+        `;
+    } else if (session.status === 'qr_ready' && session.qr) {
+        return `
+            <div class="flex justify-center">
+                <div class="p-3 bg-white border-2 border-gray-200 rounded-lg">
+                    <img src="${session.qr}" alt="QR Code" class="w-40 h-40">
+                </div>
+            </div>
+            <p class="text-center text-sm text-gray-500 mt-2">Scan dengan WhatsApp</p>
+        `;
+    } else if (session.status === 'connecting' || session.isConnecting) {
+        return `
+            <div class="flex flex-col items-center py-6">
+                <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-gray-600 mt-3">Menghubungkan...</p>
+            </div>
+        `;
+    } else {
+        return `
+            <div class="flex flex-col items-center py-6">
+                <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
+                    <i data-lucide="smartphone" class="w-8 h-8 text-gray-400"></i>
+                </div>
+                <p class="text-gray-500 mt-3">Belum terhubung</p>
+            </div>
+        `;
+    }
+}
+
+function renderSessionActions(session) {
+    if (session.status === 'connected') {
+        return `
+            <button onclick="disconnectWaSession('${session.sessionId}')" class="flex-1 px-3 py-2 bg-red-100 text-red-600 rounded-lg text-sm font-medium hover:bg-red-200 transition flex items-center justify-center gap-1">
+                <i data-lucide="power-off" class="w-4 h-4"></i>
+                Disconnect
+            </button>
+        `;
+    } else if (session.status === 'qr_ready' || session.status === 'connecting' || session.isConnecting) {
+        return `
+            <button onclick="refreshWaSession('${session.sessionId}')" class="flex-1 px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition flex items-center justify-center gap-1">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                Refresh
+            </button>
+        `;
+    } else {
+        return `
+            <button onclick="initWaSession('${session.sessionId}')" class="flex-1 px-3 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition flex items-center justify-center gap-1">
+                <i data-lucide="qr-code" class="w-4 h-4"></i>
+                Scan QR
+            </button>
+        `;
+    }
+}
+
+function getSessionStatusClass(status) {
+    const classes = {
+        connected: 'status-connected',
+        qr_ready: 'status-connecting',
+        connecting: 'status-connecting',
+        disconnected: 'status-disconnected'
+    };
+    return classes[status] || 'status-disconnected';
+}
+
+function getSessionStatusBadge(status) {
+    const badges = {
+        connected: 'bg-green-100 text-green-700',
+        qr_ready: 'bg-blue-100 text-blue-700',
+        connecting: 'bg-yellow-100 text-yellow-700',
+        disconnected: 'bg-gray-100 text-gray-600'
+    };
+    return badges[status] || 'bg-gray-100 text-gray-600';
+}
+
+function getSessionStatusText(status) {
+    const texts = {
+        connected: 'Connected',
+        qr_ready: 'Scan QR',
+        connecting: 'Connecting...',
+        disconnected: 'Disconnected'
+    };
+    return texts[status] || 'Disconnected';
+}
+
+function updateHeaderWaStatus(data) {
+    const dot = document.getElementById('waStatusDot');
+    const text = document.getElementById('waStatusText');
+    
+    if (!dot || !text) return;
+    
+    dot.classList.remove('status-connected', 'status-disconnected', 'status-connecting');
+    
+    if (data.connectedCount > 0) {
+        dot.classList.add('status-connected');
+        text.textContent = `${data.connectedCount} Connected`;
+    } else {
+        dot.classList.add('status-disconnected');
+        text.textContent = 'Disconnected';
+    }
+}
+
+async function initWaSession(sessionId) {
     try {
-        await apiCall('/whatsapp/scan', { method: 'POST' });
-        showToast('Memulai scan QR...', 'info');
+        await apiCall(`/whatsapp/sessions/${sessionId}/init`, { method: 'POST' });
+        showToast(`Memulai scan QR untuk ${sessionId}...`, 'info');
     } catch (error) {
         showToast('Gagal memulai scan: ' + error.message, 'error');
     }
 }
 
-async function handleDisconnect() {
-    if (!confirm('Yakin ingin disconnect WhatsApp?')) return;
+async function disconnectWaSession(sessionId) {
+    if (!confirm(`Yakin ingin disconnect ${sessionId}?`)) return;
     
     try {
-        await apiCall('/whatsapp/disconnect', { method: 'POST' });
-        showToast('WhatsApp disconnected', 'success');
+        await apiCall(`/whatsapp/sessions/${sessionId}/disconnect`, { method: 'POST' });
+        showToast(`${sessionId} disconnected`, 'success');
+    } catch (error) {
+        showToast('Gagal disconnect: ' + error.message, 'error');
+    }
+}
+
+async function refreshWaSession(sessionId) {
+    try {
+        await apiCall(`/whatsapp/sessions/${sessionId}/refresh`, { method: 'POST' });
+        showToast(`Refresh ${sessionId}...`, 'info');
+    } catch (error) {
+        showToast('Gagal refresh: ' + error.message, 'error');
+    }
+}
+
+// Backward compatible functions
+async function loadWhatsAppStatus() {
+    await loadWhatsAppSessions();
+}
+
+async function handleScanQR() {
+    await initWaSession('wa_1');
+}
+
+async function handleDisconnect() {
+    // Disconnect all connected sessions
+    try {
+        const data = await apiCall('/whatsapp/sessions');
+        for (const session of data.data.sessions) {
+            if (session.status === 'connected') {
+                await apiCall(`/whatsapp/sessions/${session.sessionId}/disconnect`, { method: 'POST' });
+            }
+        }
+        showToast('Semua session disconnected', 'success');
     } catch (error) {
         showToast('Gagal disconnect: ' + error.message, 'error');
     }
 }
 
 async function handleRefreshWA() {
-    try {
-        await apiCall('/whatsapp/refresh', { method: 'POST' });
-        showToast('Refresh session...', 'info');
-    } catch (error) {
-        showToast('Gagal refresh: ' + error.message, 'error');
-    }
+    await loadWhatsAppSessions();
 }
 
 // ===== CONTACTS =====
@@ -1415,9 +1604,11 @@ function getCampaignActions(campaign) {
     const actions = [];
     
     if (campaign.status === 'running' || campaign.status === 'queued') {
+        actions.push(`<button onclick="openEditIntervalModal(${campaign.id}, ${campaign.interval_minutes})" class="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit Interval"><i data-lucide="settings" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="pauseCampaign(${campaign.id})" class="p-1 text-yellow-600 hover:bg-yellow-50 rounded" title="Pause"><i data-lucide="pause" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="stopCampaign(${campaign.id})" class="p-1 text-red-600 hover:bg-red-50 rounded" title="Stop"><i data-lucide="square" class="w-4 h-4"></i></button>`);
     } else if (campaign.status === 'paused') {
+        actions.push(`<button onclick="openEditIntervalModal(${campaign.id}, ${campaign.interval_minutes})" class="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit Interval"><i data-lucide="settings" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="resumeCampaign(${campaign.id})" class="p-1 text-green-600 hover:bg-green-50 rounded" title="Resume"><i data-lucide="play" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="stopCampaign(${campaign.id})" class="p-1 text-red-600 hover:bg-red-50 rounded" title="Stop"><i data-lucide="square" class="w-4 h-4"></i></button>`);
     }
@@ -1496,6 +1687,33 @@ async function deleteCampaign(id) {
     }
 }
 
+// ===== EDIT INTERVAL =====
+function openEditIntervalModal(campaignId, currentInterval) {
+    document.getElementById('editCampaignId').value = campaignId;
+    document.getElementById('editIntervalValue').value = currentInterval;
+    openModal('editIntervalModal');
+}
+
+async function handleEditIntervalSubmit(e) {
+    e.preventDefault();
+    
+    const campaignId = document.getElementById('editCampaignId').value;
+    const newInterval = document.getElementById('editIntervalValue').value;
+    
+    try {
+        await apiCall(`/blast/campaigns/${campaignId}/interval`, {
+            method: 'PATCH',
+            body: JSON.stringify({ interval_minutes: parseInt(newInterval) })
+        });
+        
+        showToast(`Interval berhasil diubah ke ${newInterval} menit`, 'success');
+        closeModal('editIntervalModal');
+        loadCampaigns();
+    } catch (error) {
+        showToast('Gagal mengubah interval', 'error');
+    }
+}
+
 // ===== UTILITIES =====
 function openModal(id) {
     document.getElementById(id).classList.add('active');
@@ -1515,21 +1733,69 @@ async function loadProcessStatus() {
     try {
         const data = await apiCall('/blast/process-status');
         const { queueStats, activeCampaigns, pendingLogs, waStatus } = data.data;
+        
+        // Also fetch WA sessions for detailed status
+        let waSessionsData = null;
+        try {
+            const sessionsRes = await apiCall('/whatsapp/sessions');
+            waSessionsData = sessionsRes.data;
+        } catch (e) {
+            console.error('Failed to load WA sessions:', e);
+        }
 
-        // Render WA Status
+        // Render WA Status (Multi-session)
         const waStatusEl = document.getElementById('processWaStatus');
-        const statusColors = {
-            'connected': 'text-green-600',
-            'connecting': 'text-yellow-600',
-            'disconnected': 'text-red-600'
-        };
-        waStatusEl.innerHTML = `
-            <div class="flex items-center gap-2">
-                <span class="w-3 h-3 rounded-full ${waStatus.status === 'connected' ? 'bg-green-500' : waStatus.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'}"></span>
-                <span class="${statusColors[waStatus.status] || 'text-gray-600'} font-medium">${waStatus.status.toUpperCase()}</span>
-                ${waStatus.phone ? `<span class="text-gray-500">(${waStatus.phone})</span>` : ''}
-            </div>
-        `;
+        if (waSessionsData) {
+            const connectedSessions = waSessionsData.sessions.filter(s => s.status === 'connected');
+            waStatusEl.innerHTML = waSessionsData.sessions.map(session => {
+                const statusColors = {
+                    'connected': 'bg-green-500',
+                    'connecting': 'bg-yellow-500',
+                    'qr_ready': 'bg-blue-500',
+                    'disconnected': 'bg-gray-400'
+                };
+                const statusTextColors = {
+                    'connected': 'text-green-600',
+                    'connecting': 'text-yellow-600',
+                    'qr_ready': 'text-blue-600',
+                    'disconnected': 'text-gray-500'
+                };
+                return `
+                    <div class="p-2 bg-gray-50 rounded-lg flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full ${statusColors[session.status] || 'bg-gray-400'}"></span>
+                            <span class="font-medium text-gray-700">${session.label || session.sessionId}</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="${statusTextColors[session.status] || 'text-gray-500'} text-sm">${session.status}</span>
+                            ${session.phone ? `<span class="text-xs text-gray-500 ml-1">(+${session.phone})</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Add summary
+            waStatusEl.innerHTML += `
+                <div class="mt-2 p-2 bg-blue-50 rounded-lg text-center">
+                    <span class="font-medium text-blue-700">${connectedSessions.length}/${waSessionsData.maxSessions}</span>
+                    <span class="text-blue-600 text-sm"> session connected</span>
+                </div>
+            `;
+        } else {
+            // Fallback to old style
+            const statusColors = {
+                'connected': 'text-green-600',
+                'connecting': 'text-yellow-600',
+                'disconnected': 'text-red-600'
+            };
+            waStatusEl.innerHTML = `
+                <div class="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+                    <span class="w-3 h-3 rounded-full ${waStatus.status === 'connected' ? 'bg-green-500' : waStatus.status === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'}"></span>
+                    <span class="${statusColors[waStatus.status] || 'text-gray-600'} font-medium">${waStatus.status.toUpperCase()}</span>
+                    ${waStatus.phone ? `<span class="text-gray-500">(${waStatus.phone})</span>` : ''}
+                </div>
+            `;
+        }
 
         // Render Active Campaigns
         const campaignsEl = document.getElementById('processActiveCampaigns');
