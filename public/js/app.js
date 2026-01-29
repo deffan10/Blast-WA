@@ -164,10 +164,18 @@ async function apiCall(endpoint, options = {}) {
             headers
         });
         
+        // Handle non-JSON responses
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            console.error('Non-JSON response:', await response.text());
+            throw new Error('Server error - non-JSON response');
+        }
+        
         const data = await response.json();
         
-        // Only logout on 401 if not a login request
+        // Only logout on 401 if response explicitly says unauthorized
         if (response.status === 401 && !endpoint.includes('/auth/login')) {
+            console.log('401 response:', data);
             handleLogout();
             throw new Error('Session expired');
         }
@@ -1731,17 +1739,21 @@ async function handleEditIntervalSubmit(e) {
     const campaignId = document.getElementById('editCampaignId').value;
     const newInterval = document.getElementById('editIntervalValue').value;
     
+    console.log('Updating interval:', { campaignId, newInterval });
+    
     try {
-        await apiCall(`/blast/campaigns/${campaignId}/interval`, {
+        const result = await apiCall(`/blast/campaigns/${campaignId}/interval`, {
             method: 'PATCH',
             body: JSON.stringify({ interval_minutes: parseInt(newInterval) })
         });
         
+        console.log('Update result:', result);
         showToast(`Interval berhasil diubah ke ${newInterval} menit`, 'success');
         closeModal('editIntervalModal');
         loadCampaigns();
     } catch (error) {
-        showToast('Gagal mengubah interval', 'error');
+        console.error('Update interval error:', error);
+        showToast('Gagal mengubah interval: ' + error.message, 'error');
     }
 }
 
