@@ -775,11 +775,42 @@ function updateWhatsAppStatus(data) {
 // ===== WHATSAPP MULTI-SESSION =====
 async function loadWhatsAppSessions() {
     try {
+        console.log('Loading WA sessions...');
         const data = await apiCall('/whatsapp/sessions');
-        renderWhatsAppSessions(data.data);
-        updateHeaderWaStatus(data.data);
+        console.log('WA sessions data:', data);
+        
+        if (data.success && data.data) {
+            renderWhatsAppSessions(data.data);
+            updateHeaderWaStatus(data.data);
+        } else {
+            console.error('Invalid sessions data:', data);
+            // Fallback: render empty sessions
+            renderWhatsAppSessions({
+                sessions: [
+                    { sessionId: 'wa_1', status: 'disconnected', label: 'WhatsApp 1' },
+                    { sessionId: 'wa_2', status: 'disconnected', label: 'WhatsApp 2' },
+                    { sessionId: 'wa_3', status: 'disconnected', label: 'WhatsApp 3' },
+                    { sessionId: 'wa_4', status: 'disconnected', label: 'WhatsApp 4' },
+                    { sessionId: 'wa_5', status: 'disconnected', label: 'WhatsApp 5' }
+                ],
+                connectedCount: 0,
+                maxSessions: 5
+            });
+        }
     } catch (error) {
         console.error('Failed to load WA sessions:', error);
+        // Fallback: render empty sessions
+        renderWhatsAppSessions({
+            sessions: [
+                { sessionId: 'wa_1', status: 'disconnected', label: 'WhatsApp 1' },
+                { sessionId: 'wa_2', status: 'disconnected', label: 'WhatsApp 2' },
+                { sessionId: 'wa_3', status: 'disconnected', label: 'WhatsApp 3' },
+                { sessionId: 'wa_4', status: 'disconnected', label: 'WhatsApp 4' },
+                { sessionId: 'wa_5', status: 'disconnected', label: 'WhatsApp 5' }
+            ],
+            connectedCount: 0,
+            maxSessions: 5
+        });
     }
 }
 

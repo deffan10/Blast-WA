@@ -36,7 +36,14 @@ class WhatsAppController {
   async getAllSessions(req, res) {
     try {
       const sessions = getAllSessionsStatus();
-      const dbSessions = await WhatsAppSession.findAll();
+      
+      // Try to get DB sessions, handle if columns don't exist yet
+      let dbSessions = [];
+      try {
+        dbSessions = await WhatsAppSession.findAll();
+      } catch (dbError) {
+        console.log('DB query failed (migration may be needed):', dbError.message);
+      }
       
       // Merge DB data with runtime status
       const merged = sessions.map(session => {
