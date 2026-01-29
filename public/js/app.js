@@ -101,10 +101,13 @@ function initEventListeners() {
         });
     });
     
-    // WhatsApp buttons
-    document.getElementById('btnScanQR').addEventListener('click', handleScanQR);
-    document.getElementById('btnDisconnect').addEventListener('click', handleDisconnect);
-    document.getElementById('btnRefresh').addEventListener('click', handleRefreshWA);
+    // WhatsApp buttons (optional - may not exist in multi-session UI)
+    const btnScanQR = document.getElementById('btnScanQR');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+    const btnRefresh = document.getElementById('btnRefresh');
+    if (btnScanQR) btnScanQR.addEventListener('click', handleScanQR);
+    if (btnDisconnect) btnDisconnect.addEventListener('click', handleDisconnect);
+    if (btnRefresh) btnRefresh.addEventListener('click', handleRefreshWA);
     
     // Contact buttons
     document.getElementById('btnAddContact').addEventListener('click', () => openContactModal());
