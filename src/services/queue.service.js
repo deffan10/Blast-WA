@@ -195,37 +195,47 @@ const processBlast = async (campaignId) => {
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 5;
 
+  // --- NEW LOGIC: Distribute messages and enforce per-session daily limit ---
+  // Get all connected sessions from DB
+  const WhatsAppSession = require('../models').WhatsAppSession;
+  const connectedSessions = await WhatsAppSession.findAll({
+    where: { status: 'connected', is_active: true }
+  });
+  const sessionCount = connectedSessions.length;
+  if (sessionCount === 0) {
+    await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
+    emitCampaignUpdate(campaign);
+    return;
+  }
+  // Calculate per-session daily limit
+  const totalLimit = config.whatsapp.maxMessagesPerDay;
+  const perSessionLimit = Math.floor(totalLimit / sessionCount);
+
   for (const log of pendingLogs) {
     // Check if campaign was stopped or paused
     const campaignState = activeCampaigns.get(campaignId);
-    
     if (!campaignState || campaignState.stopped) {
       console.log(`Campaign ${campaignId} stopped`);
       break;
     }
-
     while (campaignState?.paused) {
       await sleep(5000);
       const updatedState = activeCampaigns.get(campaignId);
       if (!updatedState || updatedState.stopped) break;
     }
 
-    // Check WhatsApp connection - now checks for ANY connected session
-    const connectedCount = getConnectedSessionsCount();
-    if (connectedCount === 0) {
-      console.log('No WhatsApp sessions connected, pausing campaign...');
-      await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
-      emitCampaignUpdate(campaign);
-      break;
+    // Refresh session counters
+    for (const session of connectedSessions) {
+      session.checkAndResetDailyCounter();
+      await session.save();
     }
 
-    // Check daily limit
-    const dailyCount = await getDailyMessageCount();
-    if (dailyCount >= config.whatsapp.maxMessagesPerDay) {
-      console.log('Daily message limit reached, stopping campaign...');
-      await campaign.update({ 
-        status: 'paused', 
-        error_message: `Daily limit reached (${config.whatsapp.maxMessagesPerDay} messages)` 
+    // Filter sessions under their daily limit
+    const eligibleSessions = connectedSessions.filter(s => s.messages_sent_today < perSessionLimit);
+    if (eligibleSessions.length === 0) {
+      await campaign.update({
+        status: 'paused',
+        error_message: `All sessions reached daily limit (${perSessionLimit} per session)`
       });
       emitCampaignUpdate(campaign);
       break;
@@ -235,9 +245,7 @@ const processBlast = async (campaignId) => {
     const contact = await Contact.findByPk(log.contact_id, {
       include: [{ model: ContactGroup, as: 'group' }]
     });
-
     if (!contact || contact.wa_status !== 'registered') {
-      // Skip unregistered contacts
       await log.update({
         status: 'skipped',
         skip_reason: contact ? 'not_registered' : 'contact_deleted'
@@ -254,15 +262,15 @@ const processBlast = async (campaignId) => {
       message = message.replace(/\{\{nama\}\}/gi, contact.name || '');
       message = message.replace(/\{\{no_hp\}\}/gi, contact.phone || '');
       message = message.replace(/\{\{group\}\}/gi, contact.group?.name || '');
-      
-      // Add slight variation for anti-ban
       message = addMessageVariation(message);
-
-      // Get JID
       const jid = contact.wa_jid || phoneToJid(contact.phone_normalized);
 
-      // Send message (uses random connected session)
-      const result = await sendMessage(jid, message);
+      // Random eligible session
+      const randomIdx = Math.floor(Math.random() * eligibleSessions.length);
+      const session = eligibleSessions[randomIdx];
+      // Send message using specific session
+      const { sendMessageWithSession } = require('./whatsapp.service');
+      const result = await sendMessageWithSession(session.session_id, jid, message);
 
       // Update log with session info
       await log.update({
@@ -270,52 +278,35 @@ const processBlast = async (campaignId) => {
         message_content: message,
         wa_message_id: result.messageId,
         sent_at: new Date(),
-        sent_via: result.sessionId || 'unknown' // Track which session sent this
+        sent_via: result.sessionId || 'unknown'
       });
-
-      // Update campaign counters
       campaign.sent_count++;
       await campaign.save();
-
-      // Increment template usage count
       if (campaign.template) {
         await campaign.template.increment('usage_count');
       }
-
-      // Increment daily counter for the session that sent it
-      await incrementMessageCounter(result.sessionId);
-
-      // Reset error counter
+      // Increment daily counter for the session
+      session.messages_sent_today++;
+      session.last_message_date = new Date().toISOString().split('T')[0];
+      await session.save();
       consecutiveErrors = 0;
-
-      // Emit updates
       emitLogUpdate(log);
       emitCampaignUpdate(campaign);
-
       console.log(`✅ [${result.sessionId}] Message sent to ${contact.phone_normalized}`);
-
     } catch (error) {
       console.error(`❌ Failed to send to ${contact.phone_normalized}:`, error.message);
-
-      // Update log
       await log.update({
         status: 'failed',
         error_message: error.message
       });
-
       campaign.failed_count++;
       await campaign.save();
-
       consecutiveErrors++;
-
       emitLogUpdate(log);
       emitCampaignUpdate(campaign);
-
-      // Stop if too many consecutive errors (anti-ban)
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        console.log(`Too many consecutive errors (${consecutiveErrors}), stopping campaign...`);
-        await campaign.update({ 
-          status: 'stopped', 
+        await campaign.update({
+          status: 'stopped',
           error_message: `Stopped due to ${consecutiveErrors} consecutive errors`,
           completed_at: new Date()
         });
@@ -323,8 +314,6 @@ const processBlast = async (campaignId) => {
         break;
       }
     }
-
-    // Delay before next message
     const delay = getBlastDelay(campaign.interval_minutes);
     console.log(`⏳ Waiting ${Math.round(delay / 1000)}s before next message...`);
     await sleep(delay);
