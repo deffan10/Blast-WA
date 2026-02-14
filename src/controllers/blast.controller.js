@@ -314,12 +314,16 @@ class BlastController {
         });
       }
 
-      // Check WhatsApp connection
-      const waStatus = getWhatsAppStatus();
-      if (waStatus.status !== 'connected') {
+
+      // Check if at least one WhatsApp session is connected
+      const { WhatsAppSession } = require('../models');
+      const connectedSessions = await WhatsAppSession.findAll({
+        where: { status: 'connected', is_active: true }
+      });
+      if (connectedSessions.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'WhatsApp is not connected'
+          message: 'Tidak ada WhatsApp session yang terhubung'
         });
       }
 

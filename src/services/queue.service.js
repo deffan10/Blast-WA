@@ -196,22 +196,20 @@ const processBlast = async (campaignId) => {
   const MAX_CONSECUTIVE_ERRORS = 5;
 
   // --- NEW LOGIC: Distribute messages and enforce per-session daily limit ---
-  // Get all connected sessions from DB
   const WhatsAppSession = require('../models').WhatsAppSession;
-  const connectedSessions = await WhatsAppSession.findAll({
-    where: { status: 'connected', is_active: true }
-  });
-  const sessionCount = connectedSessions.length;
-  if (sessionCount === 0) {
-    await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
-    emitCampaignUpdate(campaign);
-    return;
-  }
-  // Calculate per-session daily limit
   const totalLimit = config.whatsapp.maxMessagesPerDay;
-  const perSessionLimit = Math.floor(totalLimit / sessionCount);
-
   for (const log of pendingLogs) {
+    // Always fetch connected sessions fresh each loop
+    const connectedSessions = await WhatsAppSession.findAll({
+      where: { status: 'connected', is_active: true }
+    });
+    const sessionCount = connectedSessions.length;
+    if (sessionCount === 0) {
+      await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
+      emitCampaignUpdate(campaign);
+      break;
+    }
+    const perSessionLimit = Math.floor(totalLimit / sessionCount);
     // Check if campaign was stopped or paused
     const campaignState = activeCampaigns.get(campaignId);
     if (!campaignState || campaignState.stopped) {
