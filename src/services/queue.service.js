@@ -204,11 +204,11 @@ const processBlast = async (campaignId) => {
       where: { status: 'connected', is_active: true }
     });
     const sessionCount = connectedSessions.length;
-    if (sessionCount === 0) {
-      await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
-      emitCampaignUpdate(campaign);
-      break;
-    }
+      if (sessionCount === 0) {
+        await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
+        emitCampaignUpdate(campaign);
+        break;
+      }
     const perSessionLimit = Math.floor(totalLimit / sessionCount);
     // Check if campaign was stopped or paused
     const campaignState = activeCampaigns.get(campaignId);
@@ -302,15 +302,14 @@ const processBlast = async (campaignId) => {
       consecutiveErrors++;
       emitLogUpdate(log);
       emitCampaignUpdate(campaign);
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        await campaign.update({
-          status: 'stopped',
-          error_message: `Stopped due to ${consecutiveErrors} consecutive errors`,
-          completed_at: new Date()
-        });
-        emitCampaignUpdate(campaign);
-        break;
-      }
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          await campaign.update({
+            status: 'paused',
+            error_message: `Paused due to ${consecutiveErrors} consecutive errors`
+          });
+          emitCampaignUpdate(campaign);
+          break;
+        }
     }
     const delay = getBlastDelay(campaign.interval_minutes);
     console.log(`⏳ Waiting ${Math.round(delay / 1000)}s before next message...`);
