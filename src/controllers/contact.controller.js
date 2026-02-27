@@ -1,5 +1,6 @@
-const { Contact, ContactGroup } = require('../models');
+const { Contact, ContactGroup, BlastLog } = require('../models');
 const { Op } = require('sequelize');
+const { sequelize } = require('../config/database');
 const ExcelJS = require('exceljs');
 const fs = require('fs');
 const { normalizePhoneNumber } = require('../utils/phone.util');
@@ -119,10 +120,27 @@ class ContactController {
         offset: parseInt(offset)
       });
 
+      // Hitung berapa kali tiap kontak sudah dikirim blast (status sent)
+      const contactIds = contacts.map(c => c.id);
+      let blastSentMap = {};
+      if (contactIds.length > 0) {
+        const counts = await BlastLog.findAll({
+          attributes: ['contact_id', [sequelize.fn('COUNT', sequelize.col('id')), 'cnt']],
+          where: { contact_id: { [Op.in]: contactIds }, status: 'sent' },
+          group: ['contact_id'],
+          raw: true
+        });
+        counts.forEach(row => { blastSentMap[row.contact_id] = parseInt(row.cnt, 10) || 0; });
+      }
+      const contactsWithBlast = contacts.map(c => ({
+        ...c.toJSON(),
+        blast_sent_count: blastSentMap[c.id] || 0
+      }));
+
       res.json({
         success: true,
         data: {
-          contacts,
+          contacts: contactsWithBlast,
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),

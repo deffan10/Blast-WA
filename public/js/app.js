@@ -139,6 +139,7 @@ function initEventListeners() {
     document.getElementById('templateForm').addEventListener('submit', handleTemplateSubmit);
     document.getElementById('blastForm').addEventListener('submit', handleBlastSubmit);
     document.getElementById('editIntervalForm').addEventListener('submit', handleEditIntervalSubmit);
+    document.getElementById('editSenderForm').addEventListener('submit', handleEditSenderSubmit);
 
     // Process status
     document.getElementById('btnCheckProcess').addEventListener('click', openProcessStatus);
@@ -1070,7 +1071,7 @@ function renderContacts(contacts, pagination) {
     const tbody = document.getElementById('contactsTable');
     
     if (contacts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">Tidak ada kontak</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">Tidak ada kontak</td></tr>';
         updateContactsBulkDeleteButton();
         return;
     }
@@ -1091,6 +1092,9 @@ function renderContacts(contacts, pagination) {
             <td class="px-6 py-4 text-gray-600 align-middle whitespace-nowrap">${phone}</td>
             <td class="px-6 py-4 align-middle">
                 ${c.group ? `<span class="px-2 py-1 rounded text-xs font-medium" style="background: ${groupColor}20; color: ${groupColor}">${groupName}</span>` : '<span class="text-gray-400">-</span>'}
+            </td>
+            <td class="px-6 py-4 align-middle text-center">
+                <span class="text-gray-700 font-medium">${(c.blast_sent_count != null && c.blast_sent_count > 0) ? c.blast_sent_count : 'Belum'}</span>
             </td>
             <td class="px-6 py-4 align-middle">
                 <span class="px-2 py-1 rounded text-xs font-medium ${getWaStatusBadge(c.wa_status)}">${getWaStatusText(c.wa_status)}</span>
@@ -1405,6 +1409,7 @@ function renderGroups(groups) {
                     <div>
                         <h4 class="font-medium text-gray-800">${g.name}</h4>
                         <p class="text-sm text-gray-500">${g.contact_count} kontak</p>
+                        <span class="inline-block mt-1 px-2 py-0.5 rounded text-xs font-medium ${g.blast_badge === 'Sudah' ? 'bg-green-100 text-green-800' : g.blast_badge === 'Proses' ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}">${g.blast_badge || 'Belum'}</span>
                     </div>
                 </div>
                 <div class="flex gap-1">
@@ -1607,6 +1612,24 @@ async function loadBlastData() {
         // Load groups for select
         await loadGroupsForFilter();
         
+        // Load WhatsApp sessions untuk dropdown Pengirim (hanya yang connected)
+        const senderSelect = document.getElementById('blastSender');
+        if (senderSelect) {
+            try {
+                const waData = await apiCall('/whatsapp/sessions');
+                const connected = (waData.data.sessions || []).filter(s => s.status === 'connected');
+                senderSelect.innerHTML = '<option value="">Semua WhatsApp</option>' +
+                    connected.map(s => {
+                        const label = s.label || s.sessionId || '';
+                        const detail = [s.phone, s.name].filter(Boolean).join(' - ');
+                        const text = detail ? `${label} (${detail})` : label;
+                        return `<option value="${s.sessionId}">${text}</option>`;
+                    }).join('');
+            } catch (e) {
+                senderSelect.innerHTML = '<option value="">Semua WhatsApp</option>';
+            }
+        }
+        
         // Load campaigns
         await loadCampaigns();
     } catch (error) {
@@ -1772,17 +1795,25 @@ function getCampaignStatusBadge(status) {
 
 function getCampaignActions(campaign) {
     const actions = [];
-    
+    const senderVal = campaign.sender_session_id ? `'${campaign.sender_session_id}'` : '""';
     if (campaign.status === 'running' || campaign.status === 'queued') {
+        actions.push(`<button onclick="openEditSenderModal(${campaign.id}, ${senderVal})" class="p-1 text-indigo-600 hover:bg-indigo-50 rounded" title="Ganti pengirim WA"><i data-lucide="folder-input" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="openEditIntervalModal(${campaign.id}, ${campaign.interval_minutes})" class="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit Interval"><i data-lucide="settings" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="pauseCampaign(${campaign.id})" class="p-1 text-yellow-600 hover:bg-yellow-50 rounded" title="Pause"><i data-lucide="pause" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="stopCampaign(${campaign.id})" class="p-1 text-red-600 hover:bg-red-50 rounded" title="Stop"><i data-lucide="square" class="w-4 h-4"></i></button>`);
     } else if (campaign.status === 'paused') {
+        actions.push(`<button onclick="openEditSenderModal(${campaign.id}, ${senderVal})" class="p-1 text-indigo-600 hover:bg-indigo-50 rounded" title="Ganti pengirim WA"><i data-lucide="folder-input" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="openEditIntervalModal(${campaign.id}, ${campaign.interval_minutes})" class="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit Interval"><i data-lucide="settings" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="resumeCampaign(${campaign.id})" class="p-1 text-green-600 hover:bg-green-50 rounded" title="Resume"><i data-lucide="play" class="w-4 h-4"></i></button>`);
         actions.push(`<button onclick="stopCampaign(${campaign.id})" class="p-1 text-red-600 hover:bg-red-50 rounded" title="Stop"><i data-lucide="square" class="w-4 h-4"></i></button>`);
     }
     
+    const sent = campaign.sent_count || 0;
+    const total = campaign.total_contacts || 0;
+    const hasRemaining = total > sent;
+    if (hasRemaining) {
+        actions.push(`<button onclick="bypassCampaign(${campaign.id})" class="p-1 text-amber-600 hover:bg-amber-50 rounded" title="Bypass: tandai sisa sebagai terkirim"><i data-lucide="skip-forward" class="w-4 h-4"></i></button>`);
+    }
     if (['completed', 'stopped', 'failed'].includes(campaign.status)) {
         actions.push(`<button onclick="deleteCampaign(${campaign.id})" class="p-1 text-red-600 hover:bg-red-50 rounded" title="Delete"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`);
     }
@@ -1797,7 +1828,8 @@ async function handleBlastSubmit(e) {
         name: document.getElementById('blastName').value,
         template_id: document.getElementById('blastTemplate').value,
         group_id: document.getElementById('blastGroup').value || null,
-        interval_minutes: parseInt(document.getElementById('blastInterval').value)
+        interval_minutes: parseInt(document.getElementById('blastInterval').value),
+        sender_session_id: document.getElementById('blastSender')?.value || null
     };
     
     try {
@@ -1845,6 +1877,17 @@ async function stopCampaign(id) {
     }
 }
 
+async function bypassCampaign(id) {
+    if (!confirm('Bypass: semua kontak yang belum terkirim akan ditandai sebagai "terkirim". Campaign akan dianggap selesai. Lanjut?')) return;
+    try {
+        const data = await apiCall(`/blast/campaigns/${id}/bypass`, { method: 'POST' });
+        showToast(data.message, 'success');
+        loadCampaigns();
+    } catch (error) {
+        showToast('Gagal bypass campaign', 'error');
+    }
+}
+
 async function deleteCampaign(id) {
     if (!confirm('Yakin ingin menghapus campaign ini?')) return;
     
@@ -1870,21 +1913,55 @@ async function handleEditIntervalSubmit(e) {
     const campaignId = document.getElementById('editCampaignId').value;
     const newInterval = document.getElementById('editIntervalValue').value;
     
-    console.log('Updating interval:', { campaignId, newInterval });
-    
     try {
-        const result = await apiCall(`/blast/campaigns/${campaignId}/interval`, {
+        await apiCall(`/blast/campaigns/${campaignId}/interval`, {
             method: 'PATCH',
             body: JSON.stringify({ interval_minutes: parseInt(newInterval) })
         });
-        
-        console.log('Update result:', result);
         showToast(`Interval berhasil diubah ke ${newInterval} menit`, 'success');
         closeModal('editIntervalModal');
         loadCampaigns();
     } catch (error) {
-        console.error('Update interval error:', error);
-        showToast('Gagal mengubah interval: ' + error.message, 'error');
+        showToast('Gagal mengubah interval: ' + (error.message || 'error'), 'error');
+    }
+}
+
+// ===== EDIT PENGIRIM WA =====
+async function openEditSenderModal(campaignId, currentSenderSessionId) {
+    document.getElementById('editSenderCampaignId').value = campaignId;
+    const select = document.getElementById('editSenderValue');
+    try {
+        const waData = await apiCall('/whatsapp/sessions');
+        const connected = (waData.data.sessions || []).filter(s => s.status === 'connected');
+        select.innerHTML = '<option value="">Semua WhatsApp</option>' +
+            connected.map(s => {
+                const label = s.label || s.sessionId || '';
+                const detail = [s.phone, s.name].filter(Boolean).join(' - ');
+                const text = detail ? `${label} (${detail})` : label;
+                return `<option value="${s.sessionId}">${text}</option>`;
+            }).join('');
+        select.value = currentSenderSessionId || '';
+    } catch (e) {
+        select.innerHTML = '<option value="">Semua WhatsApp</option>';
+        select.value = '';
+    }
+    openModal('editSenderModal');
+}
+
+async function handleEditSenderSubmit(e) {
+    e.preventDefault();
+    const campaignId = document.getElementById('editSenderCampaignId').value;
+    const senderSessionId = document.getElementById('editSenderValue').value || null;
+    try {
+        await apiCall(`/blast/campaigns/${campaignId}/sender`, {
+            method: 'PATCH',
+            body: JSON.stringify({ sender_session_id: senderSessionId })
+        });
+        showToast('Pengirim WA campaign diubah. Pesan berikutnya akan pakai pengirim baru.', 'success');
+        closeModal('editSenderModal');
+        loadCampaigns();
+    } catch (error) {
+        showToast('Gagal mengubah pengirim: ' + (error.message || 'error'), 'error');
     }
 }
 

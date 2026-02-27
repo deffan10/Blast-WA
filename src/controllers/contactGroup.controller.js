@@ -1,5 +1,6 @@
-const { ContactGroup, Contact } = require('../models');
+const { ContactGroup, Contact, BlastLog } = require('../models');
 const { Op } = require('sequelize');
+const { sequelize } = require('../config/database');
 
 class ContactGroupController {
   // Get all groups
@@ -17,11 +18,33 @@ class ContactGroupController {
         order: [['name', 'ASC']]
       });
 
-      // Add contact count to each group
-      const groupsWithCount = groups.map(group => ({
-        ...group.toJSON(),
-        contact_count: group.contacts?.length || 0
-      }));
+      // Kontak di grup yang sudah pernah dikirim blast (min 1x status sent)
+      const allContactIds = groups.flatMap(g => (g.contacts || []).map(c => c.id)).filter(Boolean);
+      let sentContactIds = new Set();
+      if (allContactIds.length > 0) {
+        const rows = await BlastLog.findAll({
+          attributes: ['contact_id'],
+          where: { status: 'sent', contact_id: { [Op.in]: allContactIds } },
+          group: ['contact_id'],
+          raw: true
+        });
+        rows.forEach(r => sentContactIds.add(r.contact_id));
+      }
+
+      // Add contact count + badge (Sudah / Proses / Belum)
+      const groupsWithCount = groups.map(group => {
+        const contactIds = (group.contacts || []).map(c => c.id);
+        const total = contactIds.length;
+        const sentCount = contactIds.filter(id => sentContactIds.has(id)).length;
+        let blast_badge = 'Belum';
+        if (sentCount > 0 && sentCount < total) blast_badge = 'Proses';
+        else if (sentCount === total && total > 0) blast_badge = 'Sudah';
+        return {
+          ...group.toJSON(),
+          contact_count: total,
+          blast_badge
+        };
+      });
 
       res.json({
         success: true,

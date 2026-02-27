@@ -131,7 +131,7 @@ class BlastController {
   // Create and start blast campaign
   async createCampaign(req, res) {
     try {
-      const { name, template_id, group_id, interval_minutes = 5 } = req.body;
+      const { name, template_id, group_id, interval_minutes = 5, sender_session_id } = req.body;
 
       // Validate inputs
       if (!name || !template_id) {
@@ -141,13 +141,26 @@ class BlastController {
         });
       }
 
-      // Check WhatsApp connection
-      const waStatus = getWhatsAppStatus();
-      if (waStatus.status !== 'connected') {
+      // Cek koneksi WhatsApp: minimal satu akun connected
+      const { WhatsAppSession } = require('../models');
+      const connectedSessions = await WhatsAppSession.findAll({
+        where: { status: 'connected', is_active: true }
+      });
+      if (connectedSessions.length === 0) {
         return res.status(400).json({
           success: false,
           message: 'WhatsApp is not connected. Please scan QR code first.'
         });
+      }
+      // Jika pengirim spesifik dipilih, pastikan session tersebut connected
+      if (sender_session_id) {
+        const sessionConnected = connectedSessions.some(s => s.session_id === sender_session_id);
+        if (!sessionConnected) {
+          return res.status(400).json({
+            success: false,
+            message: 'Akun WhatsApp yang dipilih tidak terhubung. Pilih akun lain atau Semua WhatsApp.'
+          });
+        }
       }
 
       // Validate template
@@ -202,6 +215,7 @@ class BlastController {
         template_id,
         group_id: group_id || null,
         interval_minutes,
+        sender_session_id: sender_session_id || null,
         total_contacts: contacts.length,
         status: 'queued'
       });
@@ -443,6 +457,122 @@ class BlastController {
       res.status(500).json({
         success: false,
         message: 'Failed to update interval'
+      });
+    }
+  }
+
+  // Update pengirim WA (untuk campaign yang running/queued/paused — misal akun kena ban)
+  async updateSender(req, res) {
+    try {
+      const { id } = req.params;
+      const { sender_session_id } = req.body;
+
+      const campaign = await BlastCampaign.findByPk(id);
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+      if (!['running', 'queued', 'paused'].includes(campaign.status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Hanya campaign yang berjalan/dijeda bisa diubah pengirimnya'
+        });
+      }
+
+      const { WhatsAppSession } = require('../models');
+      const connectedSessions = await WhatsAppSession.findAll({
+        where: { status: 'connected', is_active: true }
+      });
+      if (sender_session_id) {
+        const ok = connectedSessions.some(s => s.session_id === sender_session_id);
+        if (!ok) {
+          return res.status(400).json({
+            success: false,
+            message: 'Akun WhatsApp yang dipilih tidak terhubung. Pilih akun lain atau Semua WhatsApp.'
+          });
+        }
+      }
+
+      await campaign.update({ sender_session_id: sender_session_id || null });
+      console.log(`Campaign ${id} pengirim diubah ke: ${sender_session_id || 'Semua WA'}`);
+
+      res.json({
+        success: true,
+        message: sender_session_id ? 'Pengirim WA campaign diubah' : 'Campaign akan kirim dari Semua WhatsApp',
+        data: campaign
+      });
+    } catch (error) {
+      console.error('Update sender error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update sender'
+      });
+    }
+  }
+
+  // Bypass: tandai semua log yang belum terkirim (pending/failed/skipped) sebagai sent — biar campaign dianggap selesai
+  async bypassCampaign(req, res) {
+    try {
+      const { id } = req.params;
+
+      const campaign = await BlastCampaign.findByPk(id);
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          message: 'Campaign not found'
+        });
+      }
+
+      if (['running', 'queued', 'paused'].includes(campaign.status)) {
+        stopBlastQueue(campaign.id);
+      }
+
+      const [bypassedCount] = await BlastLog.update(
+        { status: 'sent', sent_at: new Date() },
+        {
+          where: {
+            campaign_id: id,
+            status: { [Op.in]: ['pending', 'failed', 'skipped'] }
+          }
+        }
+      );
+
+      if (bypassedCount > 0) {
+        const { sequelize } = require('../config/database');
+        const counts = await BlastLog.findAll({
+          attributes: ['status', [sequelize.fn('COUNT', sequelize.col('id')), 'cnt']],
+          where: { campaign_id: id },
+          group: ['status'],
+          raw: true
+        });
+        const sent = counts.find(r => r.status === 'sent')?.cnt || 0;
+        const failed = counts.find(r => r.status === 'failed')?.cnt || 0;
+        const skipped = counts.find(r => r.status === 'skipped')?.cnt || 0;
+        await campaign.update({
+          sent_count: parseInt(sent, 10),
+          failed_count: parseInt(failed, 10),
+          skipped_count: parseInt(skipped, 10),
+          status: 'completed',
+          completed_at: new Date()
+        });
+      }
+
+      res.json({
+        success: true,
+        message: bypassedCount > 0
+          ? `${bypassedCount} kontak ditandai terkirim. Campaign selesai.`
+          : 'Tidak ada log yang perlu di-bypass (semua sudah terkirim).',
+        data: await BlastCampaign.findByPk(id)
+      });
+
+    } catch (error) {
+      console.error('Bypass campaign error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to bypass campaign'
       });
     }
   }

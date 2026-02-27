@@ -37,6 +37,11 @@ const BlastCampaign = sequelize.define('BlastCampaign', {
     defaultValue: 5,
     comment: 'Delay between messages in minutes'
   },
+  sender_session_id: {
+    type: DataTypes.STRING(20),
+    allowNull: true,
+    comment: 'NULL = Semua WA, wa_1/wa_2/... = hanya akun tersebut yang kirim'
+  },
   total_contacts: {
     type: DataTypes.INTEGER,
     defaultValue: 0

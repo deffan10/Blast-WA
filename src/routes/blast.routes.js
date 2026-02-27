@@ -15,6 +15,8 @@ router.post('/campaigns/:id/pause', blastController.pauseCampaign);
 router.post('/campaigns/:id/resume', blastController.resumeCampaign);
 router.post('/campaigns/:id/stop', blastController.stopCampaign);
 router.patch('/campaigns/:id/interval', blastController.updateInterval);
+router.patch('/campaigns/:id/sender', blastController.updateSender);
+router.post('/campaigns/:id/bypass', blastController.bypassCampaign);
 router.delete('/campaigns/:id', blastController.deleteCampaign);
 
 module.exports = router;

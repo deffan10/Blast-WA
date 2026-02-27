@@ -205,6 +205,10 @@ const processBlast = async (campaignId) => {
   const totalLimit = config.whatsapp.maxMessagesPerDay;
   const limitPerAccount = config.whatsapp.limitPerAccount !== false;
   for (const log of pendingLogs) {
+    // Baca ulang sender_session_id dari DB agar perubahan "Ganti pengirim" langsung dipakai
+    const freshSender = await BlastCampaign.findByPk(campaignId, { attributes: ['sender_session_id'] });
+    if (freshSender) campaign.sender_session_id = freshSender.sender_session_id;
+
     // Cek jam kirim: jika di luar rentang (mis. sudah lewat 22:00), pause dan stop sampai besok
     const sendHours = getSendHoursStatus();
     if (!sendHours.allowed) {
@@ -219,12 +223,19 @@ const processBlast = async (campaignId) => {
     }
 
     // Ambil session connected dari DB (selalu fresh)
-    const connectedSessions = await WhatsAppSession.findAll({
+    let connectedSessions = await WhatsAppSession.findAll({
       where: { status: 'connected', is_active: true }
     });
+    // Jika campaign pakai pengirim tertentu, filter hanya session itu
+    if (campaign.sender_session_id) {
+      connectedSessions = connectedSessions.filter(s => s.session_id === campaign.sender_session_id);
+    }
     const sessionCount = connectedSessions.length;
     if (sessionCount === 0) {
-      await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
+      const errMsg = campaign.sender_session_id
+        ? 'Pengirim WA yang dipilih tidak terhubung'
+        : 'No WhatsApp sessions connected';
+      await campaign.update({ status: 'paused', error_message: errMsg });
       emitCampaignUpdate(campaign);
       activeCampaigns.delete(campaignId);
       break;
