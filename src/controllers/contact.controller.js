@@ -31,20 +31,24 @@ class ContactController {
       };
       worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
 
-      // Add sample data
+      // Add sample data (berbagai format no_hp yang didukung)
       worksheet.addRow({ nama: 'John Doe', no_hp: '081234567890', group: 'Customer' });
       worksheet.addRow({ nama: 'Jane Smith', no_hp: '628987654321', group: 'VIP' });
       worksheet.addRow({ nama: 'Budi Santoso', no_hp: '08551234567', group: '' });
+      worksheet.addRow({ nama: 'Siti (+62)', no_hp: '+62 812-3456-7890', group: '' });
 
       // Add notes worksheet
       const notesSheet = workbook.addWorksheet('Petunjuk');
       notesSheet.columns = [
-        { header: 'Informasi', key: 'info', width: 60 }
+        { header: 'Informasi', key: 'info', width: 70 }
       ];
       notesSheet.getRow(1).font = { bold: true };
       notesSheet.addRow({ info: '📋 FORMAT KOLOM:' });
       notesSheet.addRow({ info: '• nama - Nama kontak (wajib)' });
-      notesSheet.addRow({ info: '• no_hp - Nomor HP (wajib), format: 08xx atau 628xx' });
+      notesSheet.addRow({ info: '• no_hp - Nomor HP Indonesia (wajib). Semua format berikut bisa dipakai:' });
+      notesSheet.addRow({ info: '    - Dengan 0: 081234567890' });
+      notesSheet.addRow({ info: '    - Dengan +62: +62 812 3456 7890 atau 6281234567890' });
+      notesSheet.addRow({ info: '    - Tanpa kode area: 81234567890 (tanpa 0 di depan)' });
       notesSheet.addRow({ info: '• group - Nama grup (opsional), grup baru akan dibuat otomatis' });
       notesSheet.addRow({ info: '' });
       notesSheet.addRow({ info: '📄 FORMAT FILE:' });
@@ -373,7 +377,7 @@ class ContactController {
     }
   }
 
-  // Bulk delete contacts
+  // Bulk delete contacts (soft delete)
   async bulkDelete(req, res) {
     try {
       const { ids } = req.body;
@@ -381,18 +385,22 @@ class ContactController {
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Contact IDs are required'
+          message: 'Contact IDs are required (array: ids)'
         });
       }
 
-      await Contact.update(
+      // Hanya hapus kontak yang masih aktif
+      const [deletedCount] = await Contact.update(
         { is_active: false },
-        { where: { id: { [Op.in]: ids } } }
+        { where: { id: { [Op.in]: ids }, is_active: true } }
       );
 
       res.json({
         success: true,
-        message: `${ids.length} contacts deleted successfully`
+        message: deletedCount > 0
+          ? `${deletedCount} kontak berhasil dihapus`
+          : 'Tidak ada kontak yang dihapus (ID tidak ditemukan atau sudah tidak aktif)',
+        data: { deleted: deletedCount, requested: ids.length }
       });
 
     } catch (error) {
@@ -400,6 +408,50 @@ class ContactController {
       res.status(500).json({
         success: false,
         message: 'Failed to delete contacts'
+      });
+    }
+  }
+
+  // Bulk pindah grup kontak
+  async bulkMoveGroup(req, res) {
+    try {
+      const { ids, group_id } = req.body;
+
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Contact IDs are required (array: ids)'
+        });
+      }
+
+      // group_id boleh null (pindah ke "Tanpa grup")
+      if (group_id != null) {
+        const group = await ContactGroup.findByPk(group_id);
+        if (!group || !group.is_active) {
+          return res.status(400).json({
+            success: false,
+            message: 'Grup tidak valid atau tidak aktif'
+          });
+        }
+      }
+
+      const [updatedCount] = await Contact.update(
+        { group_id: group_id || null },
+        { where: { id: { [Op.in]: ids }, is_active: true } }
+      );
+
+      res.json({
+        success: true,
+        message: updatedCount > 0
+          ? `${updatedCount} kontak dipindah ke grup`
+          : 'Tidak ada kontak yang diubah',
+        data: { updated: updatedCount, requested: ids.length }
+      });
+    } catch (error) {
+      console.error('Bulk move group error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to move contacts'
       });
     }
   }

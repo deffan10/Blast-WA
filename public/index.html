@@ -358,7 +358,18 @@
                                     <option value="unknown">Belum Dicek</option>
                                 </select>
                             </div>
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <select id="bulkMoveGroupSelect" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm" title="Pilih grup tujuan">
+                                    <option value="">Pindah ke grup...</option>
+                                </select>
+                                <button id="btnMoveSelectedToGroup" disabled class="px-4 py-2 bg-indigo-500 text-white rounded-lg font-medium hover:bg-indigo-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" title="Pilih kontak dan grup terlebih dahulu">
+                                    <i data-lucide="folder-input" class="w-4 h-4"></i>
+                                    Pindah ke Grup
+                                </button>
+                                <button id="btnDeleteSelectedContacts" disabled class="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" title="Pilih kontak terlebih dahulu">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                    Hapus Terpilih
+                                </button>
                                 <button id="btnValidateAll" class="px-4 py-2 bg-yellow-500 text-white rounded-lg font-medium hover:bg-yellow-600 transition flex items-center gap-2">
                                     <i data-lucide="check-circle" class="w-4 h-4"></i>
                                     Validasi Semua
@@ -378,6 +389,9 @@
                             <table class="w-full">
                                 <thead class="bg-gray-50">
                                     <tr>
+                                        <th class="px-4 py-3 text-left w-12">
+                                            <input type="checkbox" id="contactSelectAll" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" title="Pilih semua">
+                                        </th>
                                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nama</th>
                                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">No. HP</th>
                                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Grup</th>
@@ -558,7 +572,7 @@
                     <p class="text-sm text-blue-800 font-medium mb-2">📋 Format Kolom Excel:</p>
                     <ul class="text-sm text-blue-700 space-y-1">
                         <li>• <strong>nama</strong> - Nama kontak (wajib)</li>
-                        <li>• <strong>no_hp</strong> - Nomor HP (wajib)</li>
+                        <li>• <strong>no_hp</strong> - Nomor HP Indonesia (wajib). Bisa pakai: <strong>08xx</strong>, <strong>+62</strong>/<strong>62xx</strong>, atau <strong>8xx</strong> tanpa 0</li>
                         <li>• <strong>group</strong> - Nama grup (opsional)</li>
                     </ul>
                     <p class="text-xs text-blue-600 mt-2">💡 Download template untuk contoh format yang benar</p>

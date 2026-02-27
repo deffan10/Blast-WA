@@ -111,6 +111,12 @@ function initEventListeners() {
     
     // Contact buttons
     document.getElementById('btnAddContact').addEventListener('click', () => openContactModal());
+    const btnDeleteSelectedContacts = document.getElementById('btnDeleteSelectedContacts');
+    if (btnDeleteSelectedContacts) btnDeleteSelectedContacts.addEventListener('click', handleDeleteSelectedContacts);
+    const btnMoveSelectedToGroup = document.getElementById('btnMoveSelectedToGroup');
+    if (btnMoveSelectedToGroup) btnMoveSelectedToGroup.addEventListener('click', handleMoveSelectedToGroup);
+    const bulkMoveGroupSelect = document.getElementById('bulkMoveGroupSelect');
+    if (bulkMoveGroupSelect) bulkMoveGroupSelect.addEventListener('change', updateContactsBulkDeleteButton);
     document.getElementById('btnImportContacts').addEventListener('click', () => {
         openModal('importModal');
         setTimeout(() => lucide.createIcons(), 100);
@@ -1064,12 +1070,16 @@ function renderContacts(contacts, pagination) {
     const tbody = document.getElementById('contactsTable');
     
     if (contacts.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-8 text-center text-gray-500">Tidak ada kontak</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500">Tidak ada kontak</td></tr>';
+        updateContactsBulkDeleteButton();
         return;
     }
     
     tbody.innerHTML = contacts.map(c => `
         <tr class="hover:bg-gray-50">
+            <td class="px-4 py-4">
+                <input type="checkbox" class="contact-row-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500" value="${c.id}" data-id="${c.id}">
+            </td>
             <td class="px-6 py-4">
                 <div class="font-medium text-gray-900">${c.name}</div>
             </td>
@@ -1096,6 +1106,32 @@ function renderContacts(contacts, pagination) {
         </tr>
     `).join('');
     
+    // Select-all & per-row checkbox behaviour
+    const selectAll = document.getElementById('contactSelectAll');
+    if (selectAll) {
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+        selectAll.onclick = function() {
+            document.querySelectorAll('.contact-row-checkbox').forEach(cb => {
+                cb.checked = selectAll.checked;
+            });
+            updateContactsBulkDeleteButton();
+        };
+    }
+    tbody.querySelectorAll('.contact-row-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateContactsBulkDeleteButton);
+        cb.addEventListener('change', function() {
+            const selectAllEl = document.getElementById('contactSelectAll');
+            if (!selectAllEl) return;
+            const total = document.querySelectorAll('.contact-row-checkbox').length;
+            const checked = document.querySelectorAll('.contact-row-checkbox:checked').length;
+            selectAllEl.checked = total > 0 && checked === total;
+            selectAllEl.indeterminate = checked > 0 && checked < total;
+        });
+    });
+    
+    updateContactsBulkDeleteButton();
+    
     // Pagination
     renderPagination('contactsPagination', pagination, (page) => {
         contactsPage = page;
@@ -1103,6 +1139,74 @@ function renderContacts(contacts, pagination) {
     });
     
     lucide.createIcons();
+}
+
+function updateContactsBulkDeleteButton() {
+    const checked = document.querySelectorAll('.contact-row-checkbox:checked');
+    const count = checked.length;
+    const deleteBtn = document.getElementById('btnDeleteSelectedContacts');
+    const moveBtn = document.getElementById('btnMoveSelectedToGroup');
+    const moveSelect = document.getElementById('bulkMoveGroupSelect');
+    if (deleteBtn) {
+        deleteBtn.disabled = count === 0;
+        deleteBtn.title = count > 0 ? `Hapus ${count} kontak terpilih` : 'Pilih kontak terlebih dahulu';
+    }
+    if (moveBtn && moveSelect) {
+        const hasGroup = moveSelect.value !== '';
+        moveBtn.disabled = count === 0 || !hasGroup;
+        moveBtn.title = !hasGroup ? 'Pilih grup tujuan' : count === 0 ? 'Pilih kontak terlebih dahulu' : `Pindah ${count} kontak ke grup`;
+    }
+}
+
+async function handleMoveSelectedToGroup() {
+    const checked = document.querySelectorAll('.contact-row-checkbox:checked');
+    const ids = Array.from(checked).map(cb => parseInt(cb.dataset.id || cb.value, 10)).filter(Boolean);
+    const select = document.getElementById('bulkMoveGroupSelect');
+    if (ids.length === 0) {
+        showToast('Pilih minimal satu kontak', 'warning');
+        return;
+    }
+    if (!select || select.value === '') {
+        showToast('Pilih grup tujuan terlebih dahulu', 'warning');
+        return;
+    }
+    const groupId = select.value === 'none' ? null : parseInt(select.value, 10);
+    const groupLabel = select.value === 'none' ? 'Tanpa grup' : select.options[select.selectedIndex]?.textContent || 'grup';
+    if (!confirm(`Pindah ${ids.length} kontak ke "${groupLabel}"?`)) return;
+    try {
+        const data = await apiCall('/contacts/bulk-move-group', {
+            method: 'POST',
+            body: JSON.stringify({ ids, group_id: groupId })
+        });
+        showToast(data.message, 'success');
+        document.getElementById('contactSelectAll').checked = false;
+        select.value = '';
+        updateContactsBulkDeleteButton();
+        loadContacts();
+    } catch (error) {
+        showToast(error.message || 'Gagal memindah kontak', 'error');
+    }
+}
+
+async function handleDeleteSelectedContacts() {
+    const checked = document.querySelectorAll('.contact-row-checkbox:checked');
+    const ids = Array.from(checked).map(cb => parseInt(cb.dataset.id || cb.value, 10)).filter(Boolean);
+    if (ids.length === 0) {
+        showToast('Pilih minimal satu kontak', 'warning');
+        return;
+    }
+    if (!confirm(`Yakin ingin menghapus ${ids.length} kontak terpilih?`)) return;
+    try {
+        const data = await apiCall('/contacts/bulk-delete', {
+            method: 'POST',
+            body: JSON.stringify({ ids })
+        });
+        showToast(data.message, 'success');
+        document.getElementById('contactSelectAll').checked = false;
+        loadContacts();
+    } catch (error) {
+        showToast(error.message || 'Gagal menghapus kontak', 'error');
+    }
 }
 
 function getWaStatusBadge(status) {
@@ -1142,6 +1246,18 @@ async function loadGroupsForFilter() {
                 });
             }
         });
+
+        // Dropdown "Pindah ke grup" (opsi: placeholder, Tanpa grup, lalu daftar grup)
+        const bulkMoveSelect = document.getElementById('bulkMoveGroupSelect');
+        if (bulkMoveSelect) {
+            bulkMoveSelect.innerHTML = '<option value="">Pindah ke grup...</option><option value="none">Tanpa grup</option>';
+            groups.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.id;
+                opt.textContent = g.name;
+                bulkMoveSelect.appendChild(opt);
+            });
+        }
     } catch (error) {
         console.error('Failed to load groups for filter:', error);
     }

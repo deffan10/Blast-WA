@@ -184,18 +184,20 @@ class ContactGroupController {
         });
       }
 
-      // Set contacts to no group
-      await Contact.update(
-        { group_id: null },
+      // Hapus kontak di dalam grup (soft delete agar konsisten dengan grup)
+      const [contactCount] = await Contact.update(
+        { is_active: false, group_id: null },
         { where: { group_id: id } }
       );
 
-      // Soft delete
+      // Soft delete grup
       await group.update({ is_active: false });
 
       res.json({
         success: true,
-        message: 'Group deleted successfully'
+        message: contactCount > 0
+          ? `Grup dan ${contactCount} kontak di dalamnya berhasil dihapus`
+          : 'Group deleted successfully'
       });
 
     } catch (error) {

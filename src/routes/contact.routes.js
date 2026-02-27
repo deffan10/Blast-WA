@@ -16,6 +16,7 @@ router.post('/', contactController.create);
 router.put('/:id', contactController.update);
 router.delete('/:id', contactController.delete);
 router.post('/bulk-delete', contactController.bulkDelete);
+router.post('/bulk-move-group', contactController.bulkMoveGroup);
 router.post('/import', uploadExcel.single('file'), contactController.importExcel);
 router.post('/:id/validate', contactController.validateContact);
 router.post('/validate-all', contactController.validateAll);
