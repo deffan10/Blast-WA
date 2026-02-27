@@ -1829,7 +1829,8 @@ async function handleBlastSubmit(e) {
         template_id: document.getElementById('blastTemplate').value,
         group_id: document.getElementById('blastGroup').value || null,
         interval_minutes: parseInt(document.getElementById('blastInterval').value),
-        sender_session_id: document.getElementById('blastSender')?.value || null
+        sender_session_id: document.getElementById('blastSender')?.value || null,
+        only_not_blasted: document.getElementById('blastOnlyNotBlasted').checked
     };
     
     try {

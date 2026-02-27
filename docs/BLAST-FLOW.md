@@ -20,6 +20,8 @@ Dokumen ini menjelaskan alur blast dari create campaign sampai pesan terkirim, d
 
 **Catatan:** Tidak ada endpoint "Start" terpisah; create = langsung masuk queue.
 
+**Opsi "Hanya kirim ke yg belum di blast" (only_not_blasted):** Jika dicentang, sebelum buat log hanya kontak yang belum punya satupun BlastLog `status = 'sent'` yang dipakai; yang sudah pernah dapat blast tidak masuk campaign. Berguna untuk blast per grup agar terpantau (misal setelah bypass campaign besar, buat campaign per grup dengan opsi ini).
+
 ---
 
 ## 2. Queue (In-Memory)

@@ -42,6 +42,11 @@ const BlastCampaign = sequelize.define('BlastCampaign', {
     allowNull: true,
     comment: 'NULL = Semua WA, wa_1/wa_2/... = hanya akun tersebut yang kirim'
   },
+  only_not_blasted: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    comment: 'Jika true, hanya kirim ke kontak yang belum pernah dapat blast (0 BlastLog sent)'
+  },
   total_contacts: {
     type: DataTypes.INTEGER,
     defaultValue: 0

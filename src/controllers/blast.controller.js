@@ -131,7 +131,7 @@ class BlastController {
   // Create and start blast campaign
   async createCampaign(req, res) {
     try {
-      const { name, template_id, group_id, interval_minutes = 5, sender_session_id } = req.body;
+      const { name, template_id, group_id, interval_minutes = 5, sender_session_id, only_not_blasted } = req.body;
 
       // Validate inputs
       if (!name || !template_id) {
@@ -193,7 +193,7 @@ class BlastController {
         contactWhere.group_id = group_id;
       }
 
-      const contacts = await Contact.findAll({
+      let contacts = await Contact.findAll({
         where: contactWhere,
         include: [{
           model: ContactGroup,
@@ -202,10 +202,25 @@ class BlastController {
         }]
       });
 
+      // Hanya kirim ke kontak yang belum pernah di-blast (0 BlastLog sent)
+      if (contacts.length > 0 && only_not_blasted) {
+        const contactIds = contacts.map(c => c.id);
+        const alreadySentIds = await BlastLog.findAll({
+          attributes: ['contact_id'],
+          where: { contact_id: { [Op.in]: contactIds }, status: 'sent' },
+          group: ['contact_id'],
+          raw: true
+        });
+        const sentSet = new Set(alreadySentIds.map(r => r.contact_id));
+        contacts = contacts.filter(c => !sentSet.has(c.id));
+      }
+
       if (contacts.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'No eligible contacts found (must have registered WhatsApp)'
+          message: only_not_blasted
+            ? 'Tidak ada kontak yang belum pernah di-blast. Semua sudah dapat blast.'
+            : 'No eligible contacts found (must have registered WhatsApp)'
         });
       }
 
@@ -216,6 +231,7 @@ class BlastController {
         group_id: group_id || null,
         interval_minutes,
         sender_session_id: sender_session_id || null,
+        only_not_blasted: !!only_not_blasted,
         total_contacts: contacts.length,
         status: 'queued'
       });

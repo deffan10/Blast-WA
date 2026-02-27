@@ -22,6 +22,7 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 - [Fitur Anti-Ban](#-fitur-anti-ban)
 - [Deploy Production](#-deploy-production)
 - [API Documentation](#-api-documentation)
+- [Migrasi Database](#-migrasi-database)
 - [Troubleshooting](#-troubleshooting)
 - [Changelog](#-changelog)
 - [Disclaimer](#️-disclaimer)
@@ -32,19 +33,25 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 
 ### Core Features
 - ✅ **WhatsApp Web Integration** - Menggunakan Baileys v7.0.0-rc.9 (unofficial API)
+- ✅ **Multi-Session WhatsApp** - Bisa beberapa akun WA; pilih "Semua WhatsApp" atau satu akun per campaign
 - ✅ **QR Code Authentication** - Login via scan QR dari HP
 - ✅ **Session Persistence** - Session tersimpan, tidak perlu scan ulang setiap restart
 - ✅ **Bulk Messaging** - Kirim pesan ke banyak kontak sekaligus
-- ✅ **Contact Management** - Import Excel dengan template download, grup kontak, validasi nomor WA
+- ✅ **Contact Management** - Import Excel/CSV (template download), grup kontak, validasi nomor WA, **Total Blast** per kontak, bulk delete (pilih beberapa kontak → Hapus Terpilih)
 - ✅ **Message Templates** - Template dengan variabel `{{nama}}`, `{{no_hp}}`, `{{group}}` dan tracking penggunaan
-- ✅ **Campaign Management** - Buat, jalankan, pause, resume, stop campaign dengan status dan durasi
+- ✅ **Campaign Management** - Buat, jalankan, pause, resume, stop; pilih pengirim WA; **Bypass** (tandai sisa sebagai terkirim); **Hanya kirim ke yg belum di blast**; ganti pengirim/interval saat campaign jalan
 
 ### Anti-Ban Features
-- ✅ **Random Delay** - Jeda acak antar pesan (1-15 menit, termasuk 1 menit untuk testing)
-- ✅ **Daily Limit** - Batas pesan per hari (default 100)
+- ✅ **Random Delay** - Jeda acak antar pesan (1-15 menit, termasuk 1 menit untuk testing) + random 30-90 detik
+- ✅ **Daily Limit** - Batas pesan per hari (default 100); **per akun** jika `LIMIT_PER_ACCOUNT=true` (beban dibagi ke akun yang paling sedikit kirim hari ini)
+- ✅ **Send Hours & Timezone** - Batas jam kirim (`SEND_HOUR_START` / `SEND_HOUR_END`); `APP_TIMEZONE` (mis. Asia/Jakarta) untuk "hari ini" dan reset harian
+- ✅ **Delay Between Campaigns** - Jeda antar campaign saat antrian (`DELAY_BETWEEN_CAMPAIGNS_SECONDS`, default 30)
 - ✅ **Message Variation** - Variasi pesan otomatis (spasi invisible)
 - ✅ **Consecutive Error Stop** - Stop otomatis jika 5 error berturut
-- ✅ **Connection Conflict Detection** - Deteksi dan handle sesi duplikat
+- ✅ **Connection Conflict Detection** - Deteksi dan handle sesi duplikat; auto-reconnect dengan backoff (408/428/503); clear session hanya pada 401/conflict
+
+### Grup Kontak
+- ✅ **Badge Status Blast** - Tiap grup tampil badge **Sudah** (semua kontak di grup pernah di-blast) / **Proses** (sebagian) / **Belum** (belum ada yang di-blast), agar bisa prioritas blast per grup
 
 ### Dashboard Features
 - ✅ **Real-time Status** - Status koneksi WA via WebSocket (Socket.io)
@@ -84,9 +91,10 @@ Aplikasi web untuk mengirim pesan WhatsApp massal dengan fitur anti-ban dan mana
 <img width="1867" height="949" alt="image" src="https://github.com/user-attachments/assets/cd3c4193-a656-46a8-b67f-11710ded4cf9" />
 
 ### Campaign Management
-- Create new campaign with template selection
-- Target specific contact groups
-- Configurable message interval
+- Create new campaign: template, target grup (atau Semua Kontak), **Hanya kirim ke yg belum di blast** (checkbox), pengirim WA (opsional), interval
+- Target specific contact groups; opsi "Hanya kirim ke yg belum di blast" hanya memasukkan kontak yang belum pernah dapat blast
+- Ganti pengirim WA / Edit interval saat campaign jalan (running/paused)
+- **Bypass**: tombol untuk menandai sisa (pending/skipped/failed) sebagai terkirim dan selesaikan campaign
 - Pause/Resume/Stop controls
 
 ---
@@ -314,22 +322,24 @@ CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 4. Pilih grup (opsional)
 5. Klik **"Save"**
 
-**Import CSV:**
-1. Siapkan file CSV dengan format:
-   ```csv
-   name,phone,group
-   John Doe,081234567890,Customer
-   Jane Doe,089876543210,Prospect
-   ```
-2. Klik **"Import CSV"**
-3. Upload file
-4. Kontak akan ditambahkan otomatis
+**Import Excel/CSV:**
+1. Download template dari **"Download Template"** (kolom: nama, no_hp, group). Format no_hp didukung: 08xx, +62/62xx, 8xx.
+2. Isi file lalu **Import Excel** atau **Import CSV** (format: name, phone, group).
+3. Nomor duplikat akan di-skip; validasi WA berjalan otomatis setelah import.
+
+**Tabel Kontak:**
+- Kolom **Total Blast**: jumlah kali kontak sudah di-blast (angka), atau **Belum** jika 0.
+- **Pilih beberapa kontak** (checkbox) → **Hapus Terpilih** untuk bulk delete.
 
 **Validasi Nomor WA:**
 1. Pilih kontak yang ingin divalidasi
 2. Klik **"Validate"**
 3. Sistem akan cek apakah nomor terdaftar di WhatsApp
 4. Status akan berubah menjadi ✅ (registered) atau ❌ (not registered)
+
+**Grup Kontak:**
+- Di daftar grup, tiap kartu menampilkan badge **Sudah** / **Proses** / **Belum** (status blast untuk kontak di grup tersebut). Berguna untuk memprioritaskan grup mana yang akan di-blast dulu.
+- Hapus grup: kontak di grup akan di-nonaktifkan (soft-delete) dan lepas dari grup.
 
 ### 3️⃣ Buat Template Pesan
 
@@ -354,29 +364,32 @@ CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 
 ### 4️⃣ Jalankan Campaign Blast
 
-1. Klik tab **"Campaigns"**
-2. Klik **"New Campaign"**
-3. Isi:
+1. Klik tab **"Campaigns"** (atau **Blast**).
+2. Di form **Buat Blast Baru** isi:
    - **Nama Campaign** - Identifikasi campaign
    - **Template** - Pilih template pesan
-   - **Target Grup** - Pilih grup kontak atau "All"
-   - **Interval** - Jeda antar pesan (dalam menit)
-4. Klik **"Create"**
-5. Klik **"Start"** untuk mulai mengirim
-6. Monitor progress di dashboard:
+   - **Target Grup** - Pilih grup kontak atau "Semua Kontak"
+   - **Hanya kirim ke yg belum di blast** (checkbox) - Jika dicentang, hanya kontak yang belum pernah dapat blast yang masuk campaign (berguna untuk blast per grup setelah bypass campaign besar)
+   - **Pengirim WhatsApp** - Opsional: Semua WhatsApp atau satu akun (wa_1, wa_2, ...)
+   - **Interval** - Jeda antar pesan (1/5/10/15 menit)
+3. Klik **"Mulai Blast"** → campaign langsung masuk antrian (create = start).
+4. Monitor progress di daftar campaign dan dashboard:
    - 🟢 Sent - Terkirim
    - 🔴 Failed - Gagal
-   - 🟡 Skipped - Dilewati (tidak terdaftar WA)
+   - 🟡 Skipped - Dilewati (sudah kirim hari ini / tidak terdaftar WA / dll)
    - 🔵 Pending - Menunggu di antrian
 
 ### 5️⃣ Kontrol Campaign
 
 | Aksi | Fungsi |
 |------|--------|
-| **Start** | Mulai mengirim pesan |
 | **Pause** | Jeda sementara (bisa dilanjutkan) |
 | **Resume** | Lanjutkan dari pause |
-| **Stop** | Hentikan permanen |
+| **Stop** | Hentikan permanen (sisa jadi skipped) |
+| **Ganti pengirim WA** | Ubah akun WA yang dipakai untuk kirim (tanpa stop campaign) |
+| **Edit Interval** | Ubah jeda antar pesan saat campaign jalan |
+| **Bypass** | Tandai semua sisa (pending/skipped/failed) sebagai terkirim dan selesaikan campaign — berguna agar campaign besar dianggap selesai lalu buat campaign per grup dengan "Hanya kirim ke yg belum di blast" |
+| **Delete** | Hapus campaign (hanya untuk status completed/stopped/failed) |
 
 ### 6️⃣ Dashboard Aktivitas Terbaru
 
@@ -722,40 +735,59 @@ POST /api/whatsapp/validate
 ### Contacts
 
 ```http
-# List contacts
-GET /api/contacts?page=1&limit=10&search=john
+# List contacts (includes blast_sent_count per contact)
+GET /api/contacts?page=1&limit=10&search=john&group_id=1&wa_status=registered
 
 # Create contact
 POST /api/contacts
 { "name": "John", "phone": "081234567890", "group_id": 1 }
 
-# Import CSV
+# Bulk delete
+POST /api/contacts/bulk-delete
+Content-Type: application/json
+{ "ids": [1, 2, 3] }
+
+# Import CSV/Excel
 POST /api/contacts/import
 Content-Type: multipart/form-data
 file: contacts.csv
 ```
 
-### Campaigns
+### Campaigns (Blast)
 
 ```http
 # List campaigns
-GET /api/campaigns
+GET /api/blast/campaigns?page=1&limit=20&status=running
 
-# Create campaign
-POST /api/campaigns
+# Create campaign (langsung masuk queue)
+POST /api/blast/campaigns
 {
   "name": "Promo Campaign",
   "template_id": 1,
   "group_id": 1,
-  "interval_minutes": 5
+  "interval_minutes": 5,
+  "sender_session_id": null,
+  "only_not_blasted": false
 }
 
-# Start campaign
-POST /api/campaigns/:id/start
+# Pause / Resume / Stop
+POST /api/blast/campaigns/:id/pause
+POST /api/blast/campaigns/:id/resume
+POST /api/blast/campaigns/:id/stop
 
-# Pause/Stop
-POST /api/campaigns/:id/pause
-POST /api/campaigns/:id/stop
+# Ganti pengirim WA (saat campaign jalan)
+PATCH /api/blast/campaigns/:id/sender
+{ "sender_session_id": "wa_1" }
+
+# Edit interval (saat campaign jalan)
+PATCH /api/blast/campaigns/:id/interval
+{ "interval_minutes": 10 }
+
+# Bypass: tandai sisa sebagai terkirim, selesaikan campaign
+POST /api/blast/campaigns/:id/bypass
+
+# Delete campaign
+DELETE /api/blast/campaigns/:id
 ```
 
 ### Dashboard
@@ -819,6 +851,23 @@ Response:
   }
 }
 ```
+
+---
+
+## 🗃 Migrasi Database
+
+Perubahan skema (kolom baru) bisa dijalankan manual lewat SQL di folder `migrations/`. Lihat `migrations/README.md` untuk penjelasan tiap file.
+
+| File | Deskripsi |
+|------|-----------|
+| `add_only_not_blasted_to_blast_campaigns.sql` | Menambah kolom `only_not_blasted` di `blast_campaigns`. Campaign existing dapat default 0 (aman). |
+
+Contoh:
+```bash
+mysql -u root -p nama_database < migrations/add_only_not_blasted_to_blast_campaigns.sql
+```
+
+Aplikasi juga memakai `sequelize.sync({ alter: true })` saat start; kolom baru di model bisa ikut terbentuk otomatis tergantung environment.
 
 ---
 
@@ -896,6 +945,35 @@ UPDATE blast_campaigns SET status = 'stopped' WHERE status = 'running';
 
 ## 📝 Changelog
 
+### v1.1.0 (2026-02)
+
+**Manajemen Kontak:**
+- Kolom **Total Blast** di tabel kontak (angka atau "Belum")
+- **Bulk delete**: pilih kontak (checkbox) + tombol Hapus Terpilih; API `POST /api/contacts/bulk-delete`
+- Import Excel dengan template download; normalisasi no_hp (08xx, +62/62xx, 8xx)
+
+**Grup Kontak:**
+- Badge **Sudah** / **Proses** / **Belum** per grup (berdasarkan apakah kontak di grup sudah pernah di-blast)
+- Hapus grup → soft-delete kontak (is_active: false, group_id: null)
+
+**Campaign / Blast:**
+- **Pengirim WhatsApp**: pilih Semua WhatsApp atau satu akun (wa_1, wa_2, …) saat buat campaign; **Ganti pengirim WA** saat campaign jalan (PATCH sender)
+- **Edit interval** saat campaign jalan (PATCH interval)
+- **Bypass**: tombol untuk menandai sisa (pending/skipped/failed) sebagai terkirim dan selesaikan campaign (POST bypass)
+- **Hanya kirim ke yg belum di blast**: checkbox di form; hanya kontak yang belum punya BlastLog `sent` yang masuk campaign; kolom `only_not_blasted` di DB + migrasi SQL
+
+**Anti-ban & koneksi:**
+- Limit per akun: `LIMIT_PER_ACCOUNT=true` → batas per akun WA; pemilihan akun by messages_sent_today
+- `DELAY_BETWEEN_CAMPAIGNS_SECONDS` (jeda antar campaign)
+- Send hours & timezone: `SEND_HOUR_START` / `SEND_HOUR_END`, `APP_TIMEZONE` (Asia/Jakarta dll); campaign pause di luar jam kirim
+- Auto-reconnect dengan backoff (408/428/503); clear session hanya pada 401 & conflict
+
+**Lain:**
+- Perbaikan tampilan tabel kontak (checkbox, escape HTML)
+- Dokumen alur: `docs/BLAST-FLOW.md`; migrasi: `migrations/README.md` dan `add_only_not_blasted_to_blast_campaigns.sql`
+
+---
+
 ### v1.0.0 (2026-01-09)
 
 **Features:**
@@ -963,6 +1041,12 @@ Jika mengalami masalah atau butuh bantuan:
 
 ```
 Blast-WA/
+├── docs/                 # Dokumentasi alur & flow
+│   └── BLAST-FLOW.md     # Alur blast (create → queue → process)
+├── migrations/           # Skrip SQL migrasi (manual)
+│   ├── README.md         # Penjelasan tiap migrasi
+│   ├── add_only_not_blasted_to_blast_campaigns.sql
+│   └── multi_session_migration.sql
 ├── public/               # Frontend files
 │   ├── index.html        # Main HTML
 │   └── js/
