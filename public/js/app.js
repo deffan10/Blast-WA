@@ -1075,36 +1075,41 @@ function renderContacts(contacts, pagination) {
         return;
     }
     
-    tbody.innerHTML = contacts.map(c => `
+    tbody.innerHTML = contacts.map(c => {
+        const name = escapeHtml(c.name || '');
+        const phone = escapeHtml(c.phone || '');
+        const groupName = c.group ? escapeHtml(c.group.name || '') : '';
+        const groupColor = (c.group && c.group.color) ? String(c.group.color).replace(/[<>"']/g, '') : '#3B82F6';
+        return `
         <tr class="hover:bg-gray-50">
-            <td class="px-4 py-4">
-                <input type="checkbox" class="contact-row-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500" value="${c.id}" data-id="${c.id}">
+            <td class="px-4 py-4 w-12 align-middle" style="min-width: 48px;">
+                <input type="checkbox" class="contact-row-checkbox rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4" value="${c.id}" data-id="${c.id}" aria-label="Pilih ${name}">
             </td>
-            <td class="px-6 py-4">
-                <div class="font-medium text-gray-900">${c.name}</div>
+            <td class="px-6 py-4 align-middle">
+                <div class="font-medium text-gray-900">${name}</div>
             </td>
-            <td class="px-6 py-4 text-gray-600">${c.phone}</td>
-            <td class="px-6 py-4">
-                ${c.group ? `<span class="px-2 py-1 rounded text-xs font-medium" style="background: ${c.group.color}20; color: ${c.group.color}">${c.group.name}</span>` : '-'}
+            <td class="px-6 py-4 text-gray-600 align-middle whitespace-nowrap">${phone}</td>
+            <td class="px-6 py-4 align-middle">
+                ${c.group ? `<span class="px-2 py-1 rounded text-xs font-medium" style="background: ${groupColor}20; color: ${groupColor}">${groupName}</span>` : '<span class="text-gray-400">-</span>'}
             </td>
-            <td class="px-6 py-4">
+            <td class="px-6 py-4 align-middle">
                 <span class="px-2 py-1 rounded text-xs font-medium ${getWaStatusBadge(c.wa_status)}">${getWaStatusText(c.wa_status)}</span>
             </td>
-            <td class="px-6 py-4">
+            <td class="px-6 py-4 align-middle">
                 <div class="flex gap-2">
-                    <button onclick="editContact(${c.id})" class="p-1 text-blue-600 hover:bg-blue-50 rounded">
+                    <button type="button" onclick="editContact(${c.id})" class="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit">
                         <i data-lucide="edit-2" class="w-4 h-4"></i>
                     </button>
-                    <button onclick="validateContact(${c.id})" class="p-1 text-yellow-600 hover:bg-yellow-50 rounded" title="Validasi WA">
+                    <button type="button" onclick="validateContact(${c.id})" class="p-1 text-yellow-600 hover:bg-yellow-50 rounded" title="Validasi WA">
                         <i data-lucide="check-circle" class="w-4 h-4"></i>
                     </button>
-                    <button onclick="deleteContact(${c.id})" class="p-1 text-red-600 hover:bg-red-50 rounded">
+                    <button type="button" onclick="deleteContact(${c.id})" class="p-1 text-red-600 hover:bg-red-50 rounded" title="Hapus">
                         <i data-lucide="trash-2" class="w-4 h-4"></i>
                     </button>
                 </div>
             </td>
-        </tr>
-    `).join('');
+        </tr>`;
+    }).join('');
     
     // Select-all & per-row checkbox behaviour
     const selectAll = document.getElementById('contactSelectAll');
@@ -1207,6 +1212,13 @@ async function handleDeleteSelectedContacts() {
     } catch (error) {
         showToast(error.message || 'Gagal menghapus kontak', 'error');
     }
+}
+
+function escapeHtml(text) {
+    if (text == null || text === '') return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 function getWaStatusBadge(status) {
