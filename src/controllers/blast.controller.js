@@ -504,7 +504,7 @@ class BlastController {
         order: [['created_at', 'DESC']]
       });
 
-      // Get pending logs (scheduled but not sent)
+      // Get pending logs (belum terkirim)
       const pendingLogs = await BlastLog.findAll({
         where: {
           status: 'pending'
@@ -513,7 +513,7 @@ class BlastController {
           { model: Contact, as: 'contact', attributes: ['id', 'name', 'phone'] },
           { model: BlastCampaign, as: 'campaign', attributes: ['id', 'name'] }
         ],
-        order: [['scheduled_at', 'ASC']],
+        order: [['id', 'ASC']],
         limit: 20
       });
 

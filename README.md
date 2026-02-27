@@ -280,11 +280,16 @@ CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 
 | Setting | Default | Recommended | Description |
 |---------|---------|-------------|-------------|
-| `MAX_MESSAGES_PER_DAY` | 100 | 50-100 | Batas pesan per hari |
+| `LIMIT_PER_ACCOUNT` | true | true | true = batas per akun WA (100/akun), false = 100 total dibagi |
+| `MAX_MESSAGES_PER_DAY` | 100 | 50-100 | Batas pesan per hari (per akun jika LIMIT_PER_ACCOUNT=true) |
 | `MIN_DELAY_SECONDS` | 300 | 300-600 | Delay minimum (5-10 menit) |
 | `MAX_DELAY_SECONDS` | 900 | 900-1800 | Delay maksimum (15-30 menit) |
 | `RANDOM_DELAY_MIN` | 30 | 30-60 | Random tambahan min (detik) |
 | `RANDOM_DELAY_MAX` | 90 | 60-120 | Random tambahan max (detik) |
+| `DELAY_BETWEEN_CAMPAIGNS_SECONDS` | 30 | 30-60 | Jeda (detik) antar campaign saat multi campaign (anti-ban) |
+| `SEND_HOUR_START` | (kosong) | 0-23 | Jam mulai boleh kirim (kosong = dari 00:00) |
+| `SEND_HOUR_END` | 22 | 0-23 | Jam selesai boleh kirim (kosong = sampai 23:59). Contoh: 22 = stop jam 22:59, tidak kirim lewat tengah malam |
+| `APP_TIMEZONE` | (kosong) | IANA | Zona waktu untuk jam kirim & "hari ini" (contoh: Asia/Jakarta). Kosong = waktu server |
 
 ---
 
@@ -404,28 +409,34 @@ Bagian "Aktivitas Terbaru" menampilkan log pengiriman dengan fitur:
 
 ### Cara Kerja
 
-1. **Random Delay**
-   - Setiap pesan dikirim dengan jeda acak
-   - Formula: `base_interval + random(30-90 detik)`
+1. **Batas per akun (LIMIT_PER_ACCOUNT)**
+   - Default: 100 pesan/hari **per akun WA** (bukan total)
+   - Beban dibagi rata: sistem pilih akun yang paling sedikit kirim hari ini
+   - Set `LIMIT_PER_ACCOUNT=false` untuk batas 100 total dibagi ke semua akun
+
+2. **Random Delay**
+   - Setiap pesan dikirim dengan jeda acak (minimum 1 menit)
+   - Formula: `max(base_interval + random(30-90 detik), 60 detik)`
    - Contoh: interval 5 menit → actual 5.5-6.5 menit
 
-2. **Message Variation**
-   - Setiap pesan sedikit berbeda
-   - Menambahkan zero-width space di posisi random
+3. **Message Variation**
+   - Setiap pesan sedikit berbeda (spasi/emoji di akhir)
+   - Kadang sisip zero-width character di posisi acak
    - Mencegah deteksi pesan identik
 
-3. **Daily Limit**
-   - Batas default: 100 pesan/hari
-   - Reset otomatis setiap hari
-   - Campaign pause otomatis saat limit tercapai
+4. **Daily Limit**
+   - Batas default: 100 pesan/hari per akun (jika LIMIT_PER_ACCOUNT=true)
+   - Reset otomatis setiap hari per akun
+   - Campaign pause otomatis saat semua akun mencapai limit
 
-4. **Error Detection**
+5. **Error Detection**
    - Jika 5 error berturut-turut, campaign stop
    - Mencegah spam saat ada masalah koneksi
 
-5. **Connection Monitoring**
-   - Deteksi jika WhatsApp disconnect
-   - Campaign pause otomatis
+6. **Connection Monitoring & Auto-Reconnect**
+   - Deteksi disconnect (timeout/connection lost); auto-reconnect dengan backoff
+   - Campaign pause jika tidak ada akun connected
+   - Hindari conflict: jangan buka WhatsApp Web di browser lain
 
 ### ⚠️ Tips Menghindari Ban
 
@@ -847,13 +858,14 @@ mysql -u blastuser -p blast_wa
 sudo ufw status
 ```
 
-### WhatsApp terputus terus
+### WhatsApp terputus / logout sendiri
 
-1. Pastikan HP tidak mode hemat baterai
-2. WhatsApp di HP harus tetap aktif (tidak di-close)
-3. Koneksi internet HP harus stabil
-4. Jangan login WhatsApp Web di tempat lain
-5. Jika muncul "Conflict", tunggu 2 menit lalu scan ulang
+1. **Auto-reconnect**: Aplikasi akan coba reconnect otomatis (timeout/connection lost). Cek log untuk "Auto-reconnect in Xs".
+2. Pastikan HP tidak mode hemat baterai; WhatsApp di HP tetap aktif (tidak di-force close).
+3. Koneksi internet HP harus stabil; inactivity lama bisa bikin WA putus (normal).
+4. Jangan login WhatsApp Web di browser lain (conflict = harus scan ulang).
+5. Jika muncul "Conflict", tunggu 2 menit lalu scan ulang.
+6. Untuk production: pastikan server punya akses internet stabil; putus jaringan = disconnect.
 
 ### Login redirect loop / tidak bisa masuk dashboard
 

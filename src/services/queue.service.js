@@ -10,7 +10,7 @@ const {
   getDailyMessageCount
 } = require('./whatsapp.service');
 const { phoneToJid } = require('../utils/phone.util');
-const { getBlastDelay, addMessageVariation, sleep } = require('../utils/delay.util');
+const { getBlastDelay, addMessageVariation, sleep, getSendHoursStatus, getTodayLocalDateString } = require('../utils/delay.util');
 
 let io = null;
 
@@ -28,8 +28,9 @@ const initQueues = (socketIo) => {
   io = socketIo;
 
   // Use simple in-memory queues (more reliable, no Redis dependency)
-  validationQueue = createInMemoryQueue('validation', processValidation);
-  blastQueue = createInMemoryQueue('blast', processBlast);
+  validationQueue = createInMemoryQueue('validation', processValidation, { delayBetweenJobsMs: 500 });
+  const delayBetweenCampaignsMs = (config.whatsapp.delayBetweenCampaignsSeconds || 30) * 1000;
+  blastQueue = createInMemoryQueue('blast', processBlast, { delayBetweenJobsMs: delayBetweenCampaignsMs });
 
   console.log('✅ Queue system initialized (in-memory)');
 };
@@ -37,9 +38,10 @@ const initQueues = (socketIo) => {
 /**
  * Create in-memory queue with better error handling
  */
-const createInMemoryQueue = (name, processor) => {
+const createInMemoryQueue = (name, processor, options = {}) => {
   const queue = [];
   let processing = false;
+  const delayBetweenJobsMs = options.delayBetweenJobsMs ?? 500;
 
   const process = async () => {
     if (processing || queue.length === 0) return;
@@ -74,8 +76,11 @@ const createInMemoryQueue = (name, processor) => {
         }
       }
       
-      // Small delay between jobs
-      await sleep(500);
+      // Delay between jobs (blast = jeda antar campaign untuk anti-ban)
+      if (name === 'blast' && queue.length > 0 && delayBetweenJobsMs > 1000) {
+        console.log(`⏳ Jeda ${Math.round(delayBetweenJobsMs / 1000)}s sebelum campaign berikutnya (anti-ban)`);
+      }
+      await sleep(delayBetweenJobsMs);
     }
 
     processing = false;
@@ -195,21 +200,39 @@ const processBlast = async (campaignId) => {
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 5;
 
-  // --- NEW LOGIC: Distribute messages and enforce per-session daily limit ---
+  // --- Batas pesan per akun WA: dibagi rata dan dipilih session yang paling sedikit kirim (anti-ban) ---
   const WhatsAppSession = require('../models').WhatsAppSession;
   const totalLimit = config.whatsapp.maxMessagesPerDay;
+  const limitPerAccount = config.whatsapp.limitPerAccount !== false;
   for (const log of pendingLogs) {
-    // Always fetch connected sessions fresh each loop
+    // Cek jam kirim: jika di luar rentang (mis. sudah lewat 22:00), pause dan stop sampai besok
+    const sendHours = getSendHoursStatus();
+    if (!sendHours.allowed) {
+      await campaign.update({
+        status: 'paused',
+        error_message: sendHours.message + ' Silakan resume besok saat jam kirim.'
+      });
+      emitCampaignUpdate(campaign);
+      activeCampaigns.delete(campaignId);
+      console.log(`⏰ [Campaign ${campaignId}] ${sendHours.message} Campaign dijeda.`);
+      return { success: true, paused: true, reason: 'send_hours' };
+    }
+
+    // Ambil session connected dari DB (selalu fresh)
     const connectedSessions = await WhatsAppSession.findAll({
       where: { status: 'connected', is_active: true }
     });
     const sessionCount = connectedSessions.length;
-      if (sessionCount === 0) {
-        await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
-        emitCampaignUpdate(campaign);
-        break;
-      }
-    const perSessionLimit = Math.floor(totalLimit / sessionCount);
+    if (sessionCount === 0) {
+      await campaign.update({ status: 'paused', error_message: 'No WhatsApp sessions connected' });
+      emitCampaignUpdate(campaign);
+      activeCampaigns.delete(campaignId);
+      break;
+    }
+    // Limit: per akun (100 tiap akun) atau total dibagi rata (100/sessionCount)
+    const perSessionLimit = limitPerAccount
+      ? totalLimit
+      : Math.floor(totalLimit / sessionCount);
     // Check if campaign was stopped or paused
     const campaignState = activeCampaigns.get(campaignId);
     if (!campaignState || campaignState.stopped) {
@@ -221,21 +244,24 @@ const processBlast = async (campaignId) => {
       const updatedState = activeCampaigns.get(campaignId);
       if (!updatedState || updatedState.stopped) break;
     }
+    // Setelah keluar dari pause loop, cek lagi stopped (jangan lanjut kirim kalau sudah di-stop)
+    if (activeCampaigns.get(campaignId)?.stopped) break;
 
-    // Refresh session counters
+    // Refresh counter harian tiap session (reset jika ganti hari)
     for (const session of connectedSessions) {
       session.checkAndResetDailyCounter();
       await session.save();
     }
 
-    // Filter sessions under their daily limit
+    // Hanya session yang belum capai limit harian
     const eligibleSessions = connectedSessions.filter(s => s.messages_sent_today < perSessionLimit);
     if (eligibleSessions.length === 0) {
       await campaign.update({
         status: 'paused',
-        error_message: `All sessions reached daily limit (${perSessionLimit} per session)`
+        error_message: `Semua akun WA sudah mencapai batas harian (${perSessionLimit} per akun)`
       });
       emitCampaignUpdate(campaign);
+      activeCampaigns.delete(campaignId);
       break;
     }
 
@@ -263,9 +289,9 @@ const processBlast = async (campaignId) => {
       message = addMessageVariation(message);
       const jid = contact.wa_jid || phoneToJid(contact.phone_normalized);
 
-      // Random eligible session
-      const randomIdx = Math.floor(Math.random() * eligibleSessions.length);
-      const session = eligibleSessions[randomIdx];
+      // Pilih session yang paling sedikit kirim hari ini (bagi rata beban, kurangi risiko ban)
+      eligibleSessions.sort((a, b) => a.messages_sent_today - b.messages_sent_today);
+      const session = eligibleSessions[0];
       // Send message using specific session
       const { sendMessageWithSession } = require('./whatsapp.service');
       const result = await sendMessageWithSession(session.session_id, jid, message);
@@ -285,7 +311,7 @@ const processBlast = async (campaignId) => {
       }
       // Increment daily counter for the session
       session.messages_sent_today++;
-      session.last_message_date = new Date().toISOString().split('T')[0];
+      session.last_message_date = getTodayLocalDateString();
       await session.save();
       consecutiveErrors = 0;
       emitLogUpdate(log);

@@ -22,7 +22,11 @@ const { phoneToJid } = require('../utils/phone.util');
 // ===== MULTI-SESSION STATE =====
 const MAX_SESSIONS = 5;
 const sessions = new Map(); // sessionId -> { sock, qrCode, status, info, isConnecting }
+const reconnectTimeouts = new Map(); // sessionId -> timeout handle (untuk cancel)
 let io = null;
+
+// Auto-reconnect: delay bertahap (max 2 menit) agar tidak spam reconnect
+const RECONNECT_DELAYS = [5000, 15000, 30000, 60000, 120000];
 
 // Logger
 const logger = pino({ level: 'silent' });
@@ -133,6 +137,41 @@ const clearSession = (sessionId) => {
     }
   } catch (error) {
     console.error(`[${sessionId}] Failed to clear session:`, error.message);
+  }
+};
+
+/**
+ * Jadwalkan auto-reconnect (untuk connection lost / timeout, bukan logout/conflict)
+ */
+const scheduleReconnect = (sessionId, attemptIndex = 0) => {
+  if (reconnectTimeouts.has(sessionId)) {
+    clearTimeout(reconnectTimeouts.get(sessionId));
+    reconnectTimeouts.delete(sessionId);
+  }
+  if (!hasSessionFiles(sessionId)) return;
+  const delayMs = RECONNECT_DELAYS[Math.min(attemptIndex, RECONNECT_DELAYS.length - 1)];
+  console.log(`📱 [${sessionId}] Auto-reconnect in ${delayMs / 1000}s (attempt ${attemptIndex + 1})...`);
+  const timeoutId = setTimeout(async () => {
+    reconnectTimeouts.delete(sessionId);
+    const state = getSessionState(sessionId);
+    if (state.status === 'connected' || state.isConnecting) return;
+    try {
+      await initSession(sessionId, io, true);
+    } catch (e) {
+      console.error(`📱 [${sessionId}] Reconnect failed:`, e.message);
+      scheduleReconnect(sessionId, attemptIndex + 1);
+    }
+  }, delayMs);
+  reconnectTimeouts.set(sessionId, timeoutId);
+};
+
+/**
+ * Batalkan jadwal reconnect (misal user logout manual)
+ */
+const cancelReconnect = (sessionId) => {
+  if (reconnectTimeouts.has(sessionId)) {
+    clearTimeout(reconnectTimeouts.get(sessionId));
+    reconnectTimeouts.delete(sessionId);
   }
 };
 
@@ -318,18 +357,31 @@ const initSession = async (sessionId, socketIo, forceNew = false) => {
             console.log(`📱 [${sessionId}] Restart required (normal after QR scan)`);
             cleanupSocket(sessionId);
             await delay(2000);
-            
             if (hasSessionFiles(sessionId)) {
               console.log(`📱 [${sessionId}] Reconnecting with saved session...`);
               setSessionState(sessionId, { isConnecting: false });
               await initSession(sessionId, io, true);
             }
             break;
-            
-          default:
-            console.log(`📱 [${sessionId}] Connection lost.`);
+
+          case 408:  // connectionLost / timedOut
+          case 428:  // connectionClosed
+          case 503:  // unavailableService
+            // Koneksi putus (timeout / network / server) — coba reconnect otomatis
+            console.log(`📱 [${sessionId}] Connection lost (${reason}), will auto-reconnect...`);
             setSessionState(sessionId, { sock: null });
             await updateSessionStatus(sessionId, 'disconnected');
+            scheduleReconnect(sessionId, 0);
+            break;
+            
+          default:
+            // Unknown/other disconnect — tetap coba reconnect jika punya creds (kurangi "logout sendiri")
+            console.log(`📱 [${sessionId}] Disconnected (${reason}). Will try auto-reconnect if session exists.`);
+            setSessionState(sessionId, { sock: null });
+            await updateSessionStatus(sessionId, 'disconnected');
+            if (hasSessionFiles(sessionId)) {
+              scheduleReconnect(sessionId, 0);
+            }
         }
       }
     });
@@ -440,7 +492,7 @@ const getRandomConnectedSession = () => {
  */
 const disconnectSession = async (sessionId) => {
   console.log(`📱 [${sessionId}] Disconnecting...`);
-  
+  cancelReconnect(sessionId);
   const state = getSessionState(sessionId);
   setSessionState(sessionId, { isConnecting: false });
   

@@ -1,4 +1,8 @@
 require('dotenv').config();
+// Timezone: agar jam kirim & reset harian pakai zona yang sama (mis. Asia/Jakarta)
+if (process.env.APP_TIMEZONE) {
+  process.env.TZ = process.env.APP_TIMEZONE;
+}
 const express = require('express');
 const cors = require('cors');
 const http = require('http');

@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
+const { getTodayLocalDateString } = require('../utils/delay.util');
 
 const WhatsAppSession = sequelize.define('WhatsAppSession', {
   id: {
@@ -52,9 +53,9 @@ const WhatsAppSession = sequelize.define('WhatsAppSession', {
   tableName: 'whatsapp_sessions'
 });
 
-// Reset daily counter
+// Reset daily counter (pakai tanggal local / TZ supaya konsisten dengan jam kirim)
 WhatsAppSession.prototype.checkAndResetDailyCounter = function() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayLocalDateString();
   if (this.last_message_date !== today) {
     this.messages_sent_today = 0;
     this.last_message_date = today;
